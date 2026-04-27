@@ -10,6 +10,7 @@ const meanAreaLabel = document.querySelector("#meanAreaLabel");
 const areaSpreadSlider = document.querySelector("#areaSpread");
 const areaSpreadLabel = document.querySelector("#areaSpreadLabel");
 const newGameButton = document.querySelector("#newGame");
+const solveButton = document.querySelector("#solve");
 const undoButton = document.querySelector("#undo");
 const clearButton = document.querySelector("#clear");
 const logoutButton = document.querySelector("#logout");
@@ -54,6 +55,17 @@ areaSpreadSlider.addEventListener("input", () => {
 clearButton.addEventListener("click", () => {
   pushHistory();
   state.regions = [];
+  render();
+  scheduleSave();
+});
+
+solveButton.addEventListener("click", () => {
+  if (!state.solution) {
+    alert("Для этого уровня решение не сохранено (старая версия игры). Попробуй новый уровень.");
+    return;
+  }
+  pushHistory();
+  state.regions = state.solution.map((rect) => ({ ...rect }));
   render();
   scheduleSave();
 });
@@ -114,7 +126,7 @@ function makeGame(size, tuning) {
     y: rect.y + Math.floor(rng() * rect.h),
     value: rect.w * rect.h
   }));
-  return { size, tuning, seed, clues, regions: [], history: [] };
+  return { size, tuning, seed, clues, solution, regions: [], history: [] };
 }
 
 function pickGeneratedLevel(size, tuning) {
@@ -309,6 +321,7 @@ function normalizeState(saved) {
     tuning,
     seed: saved.seed,
     clues: saved.clues || [],
+    solution: saved.solution || null,
     regions: saved.regions || [],
     history: saved.history || []
   };
