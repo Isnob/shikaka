@@ -1,69 +1,79 @@
-# 🟦 Shikaka
+# Shikaka
 
-Minimalist, single-user implementation of the **Shikaku** (Rectangles) puzzle game.
+![Interface](media/screenshots/interface.png)
 
-Shikaku is a logic puzzle where you divide a grid into rectangular and square pieces such that each piece contains exactly one number, and that number represents the area of the rectangle.
+A brutally minimal, single-user implementation of the Shikaku puzzle game. Built with an emphasis on zero-bloat architecture, skipping heavy frameworks and build steps in favor of native platform capabilities.
 
-## ✨ Features
+## Architecture
 
-- **Responsive Design**: Play comfortably on desktop or mobile.
-- **Progress Persistence**: Your game state is saved automatically in a PostgreSQL database.
-- **Secure Access**: Simple password-based authentication for private instances.
-- **Minimalist Tech Stack**: Built with Vanilla JS and Node.js for maximum performance and zero bloat.
+Shikaka is designed around a lean tech stack, utilizing vanilla APIs wherever possible.
 
-## 🛠 Tech Stack
+```mermaid
+graph LR
+    Client[Vanilla JS Client] -- JSON API --> Server[Node.js Native HTTP]
+    Server -- pg module --> DB[(PostgreSQL)]
+    
+    subgraph Frontend [Browser]
+    Client --> Logic[State Management]
+    Logic --> DOM[DOM Render Loop]
+    end
+    
+    subgraph Backend [Node.js]
+    Server --> Router[Native Router]
+    Router --> Auth[HMAC Session Auth]
+    Router --> Storage[JSON Persistence]
+    end
+```
 
-- **Backend**: Node.js (Native modules + `pg`)
-- **Database**: PostgreSQL
-- **Frontend**: HTML5, CSS3, Vanilla JavaScript
+### The Frontend (`public/`)
+- **Zero-Dependency Vanilla JS:** No React, Vue, or build pipeline (Webpack/Vite). The code in `public/app.js` is exactly what the browser executes.
+- **State Synchronization:** The game logic runs locally in the browser, pushing a serialized JSON state to the backend to persist progress.
+- **Custom Render Loop:** UI updates are handled through direct, efficient DOM manipulation.
 
-## 🚀 Getting Started
+### The Backend (`server.js`)
+- **Native `node:http`:** No Express or Fastify. Routing and static file serving are implemented natively to minimize the footprint.
+- **Lean Dependencies:** The only external package is `pg` for database communication.
+- **Security:** Session management uses cookie-based tokens signed with HMAC SHA-256 (via `node:crypto`) to prevent tampering.
+- **Data Persistence:** Relies on PostgreSQL's `ON CONFLICT` feature for atomic upserts, storing the entire game state as a single JSON payload.
 
-### Prerequisites
+## Local Setup
 
-- Node.js (v18 or higher)
+### Requirements
+- Node.js >= 18
 - PostgreSQL
 
-### Installation
+### Running the App
 
-1. **Clone the repository:**
-   ```bash
-   git clone git@github.com:Isnob/shikaka.git
-   cd shikaka
-   ```
-
-2. **Install dependencies:**
+1. Install the database driver:
    ```bash
    npm install
    ```
 
-3. **Database setup:**
-   Create a database named `shikaka`:
+2. Create the local database:
    ```bash
    createdb shikaka
    ```
 
-4. **Configuration:**
-   Copy the example environment file and fill in your details:
+3. Configure environment variables:
    ```bash
    cp .env.example .env
    ```
 
-5. **Start the application:**
+4. Start the server:
    ```bash
    npm start
    ```
-   Open `http://localhost:3000` in your browser.
 
-## ⚙️ Environment Variables
+Open `http://localhost:3000`. If `SHIKAKU_PASSWORD` is not configured, the default development password is `change-me`.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | Port to run the server on | `3000` |
-| `SHIKAKU_PASSWORD` | Access password for the game | `change-me` |
-| `DATABASE_URL` | PostgreSQL connection string | `postgres://localhost:5432/shikaka` |
-| `SESSION_SECRET` | Secret key for session hashing | (randomly generated) |
+## Deployment
 
-## 📜 License
+Shikaka runs perfectly on a standard VPS without needing complex orchestrators or containers. Set the environment variables and run it directly:
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+```bash
+PORT=3000 \
+SHIKAKU_PASSWORD='your-strong-password' \
+SESSION_SECRET='long-random-string' \
+DATABASE_URL='postgres://user:password@localhost:5432/shikaka' \
+npm start
+```
