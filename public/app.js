@@ -126,21 +126,12 @@ function pickGeneratedLevel(size, difficulty) {
 }
 
 function scoreSolution(solution, difficulty) {
-  const rightBias = Math.max(0, difficulty - 50) / 50;
   const leftBias = Math.max(0, 50 - difficulty) / 50;
+  const rightBias = Math.max(0, difficulty - 50) / 50;
+  const averageArea = solution.reduce((sum, rect) => sum + rect.w * rect.h, 0) / solution.length;
 
-  if (rightBias > 0) {
-    const profile = generatorProfile(Math.sqrt(solution.reduce((sum, rect) => sum + rect.w * rect.h, 0)), difficulty);
-    const targetArea = profile.baseMaxArea * 0.65;
-    return solution.reduce((score, rect) => {
-      const area = rect.w * rect.h;
-      const smallPenalty = area <= 12 ? Math.pow(13 - area, 2.2) * rightBias : 0;
-      const largePenalty = Math.max(0, area - targetArea * 1.8) * rightBias * 3;
-      return score + smallPenalty + largePenalty;
-    }, 0);
-  }
-
-  if (leftBias > 0) return solution.length * leftBias;
+  if (leftBias > 0) return -averageArea;
+  if (rightBias > 0) return averageArea;
   return 0;
 }
 
@@ -320,23 +311,21 @@ function updateDifficultyLabel(value) {
 
 function generatorProfile(size, difficulty) {
   const baseMaxArea = size <= 6 ? 8 : size <= 8 ? 12 : size <= 10 ? 16 : size <= 20 ? 28 : 36;
-  const distance = Math.abs(difficulty - 50) / 50;
   const leftBias = Math.max(0, 50 - difficulty) / 50;
   const rightBias = Math.max(0, difficulty - 50) / 50;
 
   return {
-    baseMaxArea,
-    maxArea: Math.round(baseMaxArea * (1 + leftBias * 4 + rightBias * 0.45)),
-    minArea: Math.round(2 + leftBias * 8),
-    stopBase: 0.34 + leftBias * 0.5,
-    areaBias: distance,
-    edgeBias: leftBias + rightBias * 4
+    maxArea: Math.max(3, Math.round(baseMaxArea * (1 + leftBias * 4 - rightBias * 0.55))),
+    minArea: 2,
+    stopBase: Math.max(0.08, Math.min(0.9, 0.34 + leftBias * 0.5 - rightBias * 0.22)),
+    stopSlope: leftBias * 0.45 - rightBias * 0.26,
+    edgeBias: rightBias * 2
   };
 }
 
 function stopProbability(area, profile) {
   const ratio = Math.min(1, Math.max(0, area / profile.maxArea));
-  return Math.min(0.94, profile.stopBase + profile.areaBias * ratio * 0.42);
+  return Math.max(0.04, Math.min(0.94, profile.stopBase + profile.stopSlope * ratio));
 }
 
 function possibleCuts(length, otherSide, size, minArea) {
@@ -355,7 +344,7 @@ function pickCut(cuts, length, otherSide, profile, rng) {
   const weighted = cuts.map((cut) => {
     const smallerArea = Math.min(cut, length - cut) * otherSide;
     const normalized = Math.max(0.01, smallerArea / profile.maxArea);
-    return { cut, weight: Math.pow(normalized, profile.edgeBias * 3) };
+    return { cut, weight: Math.pow(normalized, profile.edgeBias * -1.8) };
   });
   const total = weighted.reduce((sum, item) => sum + item.weight, 0);
   let roll = rng() * total;
