@@ -175,13 +175,19 @@ input {
   cursor: crosshair;
 }
 
-.board[data-size="20"] .cell {
+.board[data-size="20"] {
   --board-cell: min(4.4vw, 34px);
+}
+
+.board[data-size="20"] .cell {
   font-size: 14px;
 }
 
-.board[data-size="26"] .cell {
+.board[data-size="26"] {
   --board-cell: min(3.5vw, 28px);
+}
+
+.board[data-size="26"] .cell {
   font-size: 12px;
 }
 
@@ -254,11 +260,11 @@ input {
     --board-cell: min(12vw, 52px);
   }
 
-  .board[data-size="20"] .cell {
+  .board[data-size="20"] {
     --board-cell: 32px;
   }
 
-  .board[data-size="26"] .cell {
+  .board[data-size="26"] {
     --board-cell: 28px;
   }
 
