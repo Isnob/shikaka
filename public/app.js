@@ -112,7 +112,7 @@ function makeGame(size, difficulty) {
 
 function pickGeneratedLevel(size, difficulty) {
   const bias = Math.abs(difficulty - 50) / 50;
-  const attempts = Math.max(1, Math.round(1 + bias * 24));
+  const attempts = Math.max(10, Math.round(10 + bias * 18));
   let best = null;
 
   for (let index = 0; index < attempts; index += 1) {
@@ -128,11 +128,21 @@ function pickGeneratedLevel(size, difficulty) {
 function scoreSolution(solution, difficulty) {
   const leftBias = Math.max(0, 50 - difficulty) / 50;
   const rightBias = Math.max(0, difficulty - 50) / 50;
+  const size = Math.sqrt(solution.reduce((sum, rect) => sum + rect.w * rect.h, 0));
+  const profile = generatorProfile(size, difficulty);
   const averageArea = solution.reduce((sum, rect) => sum + rect.w * rect.h, 0) / solution.length;
+  const targetScore = Math.abs(averageArea - profile.targetArea) * 12;
+  const smallScore = solution.reduce((score, rect) => {
+    const area = rect.w * rect.h;
+    if (area === 2) return score + 120;
+    if (area === 3) return score + 42;
+    if (area === 4) return score + 14;
+    return score;
+  }, 0);
 
-  if (leftBias > 0) return -averageArea;
-  if (rightBias > 0) return averageArea;
-  return 0;
+  if (leftBias > 0) return -averageArea + smallScore * 0.08;
+  if (rightBias > 0) return averageArea + smallScore * 0.22;
+  return targetScore + smallScore;
 }
 
 function splitRect(rect, rng, size, difficulty) {
@@ -313,13 +323,15 @@ function generatorProfile(size, difficulty) {
   const baseMaxArea = size <= 6 ? 8 : size <= 8 ? 12 : size <= 10 ? 16 : size <= 20 ? 28 : 36;
   const leftBias = Math.max(0, 50 - difficulty) / 50;
   const rightBias = Math.max(0, difficulty - 50) / 50;
+  const targetArea = Math.max(3.5, baseMaxArea * (0.55 + leftBias * 1.9 - rightBias * 0.42));
 
   return {
     maxArea: Math.max(3, Math.round(baseMaxArea * (1 + leftBias * 4 - rightBias * 0.55))),
-    minArea: 2,
-    stopBase: Math.max(0.08, Math.min(0.9, 0.34 + leftBias * 0.5 - rightBias * 0.22)),
-    stopSlope: leftBias * 0.45 - rightBias * 0.26,
-    edgeBias: rightBias * 2
+    minArea: 3 - rightBias,
+    targetArea,
+    stopBase: Math.max(0.08, Math.min(0.9, 0.24 + leftBias * 0.5 - rightBias * 0.12)),
+    stopSlope: 0.42 + leftBias * 0.32 - rightBias * 0.22,
+    edgeBias: 1 + rightBias * 1.7
   };
 }
 
@@ -339,12 +351,14 @@ function possibleCuts(length, otherSide, size, minArea) {
 }
 
 function pickCut(cuts, length, otherSide, profile, rng) {
-  if (profile.edgeBias === 0) return cuts[Math.floor(rng() * cuts.length)];
-
   const weighted = cuts.map((cut) => {
-    const smallerArea = Math.min(cut, length - cut) * otherSide;
-    const normalized = Math.max(0.01, smallerArea / profile.maxArea);
-    return { cut, weight: Math.pow(normalized, profile.edgeBias * -1.8) };
+    const leftArea = cut * otherSide;
+    const rightArea = (length - cut) * otherSide;
+    const smallerArea = Math.min(leftArea, rightArea);
+    const targetDistance = Math.abs(smallerArea - profile.targetArea) / profile.targetArea;
+    const tinyPenalty = tinyAreaPenalty(leftArea) * tinyAreaPenalty(rightArea);
+    const balance = Math.max(0.2, smallerArea / Math.max(leftArea, rightArea));
+    return { cut, weight: tinyPenalty * balance * Math.exp(-targetDistance * profile.edgeBias) };
   });
   const total = weighted.reduce((sum, item) => sum + item.weight, 0);
   let roll = rng() * total;
@@ -353,6 +367,13 @@ function pickCut(cuts, length, otherSide, profile, rng) {
     if (roll <= 0) return item.cut;
   }
   return weighted.at(-1).cut;
+}
+
+function tinyAreaPenalty(area) {
+  if (area === 2) return 0.03;
+  if (area === 3) return 0.18;
+  if (area === 4) return 0.45;
+  return 1;
 }
 
 function buildAssignments() {
