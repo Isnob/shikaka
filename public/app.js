@@ -5,8 +5,10 @@ const loginError = document.querySelector("#loginError");
 const board = document.querySelector("#board");
 const statusLine = document.querySelector("#status");
 const sizeSelect = document.querySelector("#size");
-const difficultySlider = document.querySelector("#difficulty");
-const difficultyLabel = document.querySelector("#difficultyLabel");
+const meanAreaSlider = document.querySelector("#meanArea");
+const meanAreaLabel = document.querySelector("#meanAreaLabel");
+const areaSpreadSlider = document.querySelector("#areaSpread");
+const areaSpreadLabel = document.querySelector("#areaSpreadLabel");
 const newGameButton = document.querySelector("#newGame");
 const undoButton = document.querySelector("#undo");
 const clearButton = document.querySelector("#clear");
@@ -38,11 +40,15 @@ loginForm.addEventListener("submit", async (event) => {
 });
 
 newGameButton.addEventListener("click", () => {
-  startNewGame(Number(sizeSelect.value), Number(difficultySlider.value));
+  startNewGame(Number(sizeSelect.value), readTuning());
 });
 
-difficultySlider.addEventListener("input", () => {
-  updateDifficultyLabel(Number(difficultySlider.value));
+meanAreaSlider.addEventListener("input", () => {
+  updateTuningLabels();
+});
+
+areaSpreadSlider.addEventListener("input", () => {
+  updateTuningLabels();
 });
 
 clearButton.addEventListener("click", () => {
@@ -82,23 +88,24 @@ async function loadGame() {
   if (saved.state) {
     state = normalizeState(saved.state);
   } else {
-    state = makeGame(8, 50);
+    state = makeGame(8, { meanArea: 50, areaSpread: 50 });
     await saveState();
   }
   sizeSelect.value = String(state.size);
-  difficultySlider.value = String(state.difficulty);
-  updateDifficultyLabel(state.difficulty);
+  meanAreaSlider.value = String(state.tuning.meanArea);
+  areaSpreadSlider.value = String(state.tuning.areaSpread);
+  updateTuningLabels();
   render();
 }
 
-function startNewGame(size, difficulty) {
-  state = makeGame(size, difficulty);
+function startNewGame(size, tuning) {
+  state = makeGame(size, tuning);
   render();
   scheduleSave();
 }
 
-function makeGame(size, difficulty) {
-  const candidate = pickGeneratedLevel(size, difficulty);
+function makeGame(size, tuning) {
+  const candidate = pickGeneratedLevel(size, tuning);
   const seed = candidate.seed;
   const rng = mulberry32(seed);
   const solution = candidate.solution;
@@ -107,46 +114,37 @@ function makeGame(size, difficulty) {
     y: rect.y + Math.floor(rng() * rect.h),
     value: rect.w * rect.h
   }));
-  return { size, difficulty, seed, clues, regions: [], history: [] };
+  return { size, tuning, seed, clues, regions: [], history: [] };
 }
 
-function pickGeneratedLevel(size, difficulty) {
-  const bias = Math.abs(difficulty - 50) / 50;
-  const attempts = Math.max(10, Math.round(10 + bias * 18));
+function pickGeneratedLevel(size, tuning) {
+  const attempts = 36;
   let best = null;
 
   for (let index = 0; index < attempts; index += 1) {
     const seed = Math.floor(Math.random() * 2 ** 31);
-    const solution = splitRect({ x: 0, y: 0, w: size, h: size }, mulberry32(seed), size, difficulty);
-    const score = scoreSolution(solution, difficulty);
+    const solution = splitRect({ x: 0, y: 0, w: size, h: size }, mulberry32(seed), size, tuning);
+    const score = scoreSolution(solution, tuning);
     if (!best || score < best.score) best = { seed, solution, score };
   }
 
   return best;
 }
 
-function scoreSolution(solution, difficulty) {
-  const leftBias = Math.max(0, 50 - difficulty) / 50;
-  const rightBias = Math.max(0, difficulty - 50) / 50;
+function scoreSolution(solution, tuning) {
   const size = Math.sqrt(solution.reduce((sum, rect) => sum + rect.w * rect.h, 0));
-  const profile = generatorProfile(size, difficulty);
-  const averageArea = solution.reduce((sum, rect) => sum + rect.w * rect.h, 0) / solution.length;
-  const targetScore = Math.abs(averageArea - profile.targetArea) * 12;
-  const smallScore = solution.reduce((score, rect) => {
-    const area = rect.w * rect.h;
-    if (area === 2) return score + 120;
-    if (area === 3) return score + 42;
-    if (area === 4) return score + 14;
-    return score;
-  }, 0);
+  const profile = generatorProfile(size, tuning);
+  const stats = areaStats(solution);
+  const meanError = Math.abs(stats.mean - profile.targetMean) / profile.targetMean;
+  const spreadError = Math.abs(stats.stdev - profile.targetStdev) / Math.max(1, profile.targetStdev);
+  const duplicatePenalty = histogramConcentration(stats.counts, solution.length);
+  const tinyPenalty = (stats.counts.get(2) || 0) / solution.length;
 
-  if (leftBias > 0) return -averageArea + smallScore * 0.08;
-  if (rightBias > 0) return averageArea + smallScore * 0.22;
-  return targetScore + smallScore;
+  return meanError * 90 + spreadError * 55 + duplicatePenalty * 80 + tinyPenalty * 24;
 }
 
-function splitRect(rect, rng, size, difficulty) {
-  const profile = generatorProfile(size, difficulty);
+function splitRect(rect, rng, size, tuning) {
+  const profile = generatorProfile(size, tuning);
   const area = rect.w * rect.h;
   const verticalCuts = possibleCuts(rect.w, rect.h, size, profile.minArea);
   const horizontalCuts = possibleCuts(rect.h, rect.w, size, profile.minArea);
@@ -161,15 +159,15 @@ function splitRect(rect, rng, size, difficulty) {
   if (splitVertical) {
     const cut = pickCut(verticalCuts, rect.w, rect.h, profile, rng);
     return [
-      ...splitRect({ x: rect.x, y: rect.y, w: cut, h: rect.h }, rng, size, difficulty),
-      ...splitRect({ x: rect.x + cut, y: rect.y, w: rect.w - cut, h: rect.h }, rng, size, difficulty)
+      ...splitRect({ x: rect.x, y: rect.y, w: cut, h: rect.h }, rng, size, tuning),
+      ...splitRect({ x: rect.x + cut, y: rect.y, w: rect.w - cut, h: rect.h }, rng, size, tuning)
     ];
   }
 
   const cut = pickCut(horizontalCuts, rect.h, rect.w, profile, rng);
   return [
-    ...splitRect({ x: rect.x, y: rect.y, w: rect.w, h: cut }, rng, size, difficulty),
-    ...splitRect({ x: rect.x, y: rect.y + cut, w: rect.w, h: rect.h - cut }, rng, size, difficulty)
+    ...splitRect({ x: rect.x, y: rect.y, w: rect.w, h: cut }, rng, size, tuning),
+    ...splitRect({ x: rect.x, y: rect.y + cut, w: rect.w, h: rect.h - cut }, rng, size, tuning)
   ];
 }
 
@@ -301,9 +299,14 @@ function updateStatus() {
 }
 
 function normalizeState(saved) {
+  const tuning = saved.tuning || {
+    meanArea: saved.difficulty ?? 50,
+    areaSpread: 50
+  };
+
   return {
     size: saved.size,
-    difficulty: saved.difficulty ?? 50,
+    tuning,
     seed: saved.seed,
     clues: saved.clues || [],
     regions: saved.regions || [],
@@ -315,23 +318,33 @@ function pushHistory() {
   state.history.push(state.regions.map((region) => ({ ...region })));
 }
 
-function updateDifficultyLabel(value) {
-  difficultyLabel.value = `${value}/100`;
+function readTuning() {
+  return {
+    meanArea: Number(meanAreaSlider.value),
+    areaSpread: Number(areaSpreadSlider.value)
+  };
 }
 
-function generatorProfile(size, difficulty) {
+function updateTuningLabels() {
+  meanAreaLabel.value = meanAreaSlider.value;
+  areaSpreadLabel.value = areaSpreadSlider.value;
+}
+
+function generatorProfile(size, tuning) {
   const baseMaxArea = size <= 6 ? 8 : size <= 8 ? 12 : size <= 10 ? 16 : size <= 20 ? 28 : 36;
-  const leftBias = Math.max(0, 50 - difficulty) / 50;
-  const rightBias = Math.max(0, difficulty - 50) / 50;
-  const targetArea = Math.max(3.5, baseMaxArea * (0.55 + leftBias * 1.9 - rightBias * 0.42));
+  const meanRatio = tuning.meanArea / 100;
+  const spreadRatio = tuning.areaSpread / 100;
+  const targetMean = 3 + baseMaxArea * (0.22 + meanRatio * 1.75);
+  const targetStdev = 1.2 + targetMean * (0.12 + spreadRatio * 0.95);
 
   return {
-    maxArea: Math.max(3, Math.round(baseMaxArea * (1 + leftBias * 4 - rightBias * 0.55))),
-    minArea: 3 - rightBias,
-    targetArea,
-    stopBase: Math.max(0.08, Math.min(0.9, 0.24 + leftBias * 0.5 - rightBias * 0.12)),
-    stopSlope: 0.42 + leftBias * 0.32 - rightBias * 0.22,
-    edgeBias: 1 + rightBias * 1.7
+    maxArea: Math.max(4, Math.round(targetMean + targetStdev * 2.3)),
+    minArea: targetMean < 5 ? 2 : 3,
+    targetMean,
+    targetStdev,
+    stopBase: Math.max(0.08, Math.min(0.82, 0.18 + meanRatio * 0.48)),
+    stopSlope: Math.max(0.12, 0.62 - meanRatio * 0.24),
+    edgeBias: 0.85 + (1 - spreadRatio) * 1.35
   };
 }
 
@@ -355,7 +368,7 @@ function pickCut(cuts, length, otherSide, profile, rng) {
     const leftArea = cut * otherSide;
     const rightArea = (length - cut) * otherSide;
     const smallerArea = Math.min(leftArea, rightArea);
-    const targetDistance = Math.abs(smallerArea - profile.targetArea) / profile.targetArea;
+    const targetDistance = Math.abs(smallerArea - profile.targetMean) / profile.targetStdev;
     const tinyPenalty = tinyAreaPenalty(leftArea) * tinyAreaPenalty(rightArea);
     const balance = Math.max(0.2, smallerArea / Math.max(leftArea, rightArea));
     return { cut, weight: tinyPenalty * balance * Math.exp(-targetDistance * profile.edgeBias) };
@@ -374,6 +387,24 @@ function tinyAreaPenalty(area) {
   if (area === 3) return 0.18;
   if (area === 4) return 0.45;
   return 1;
+}
+
+function areaStats(solution) {
+  const areas = solution.map((rect) => rect.w * rect.h);
+  const mean = areas.reduce((sum, area) => sum + area, 0) / areas.length;
+  const variance = areas.reduce((sum, area) => sum + (area - mean) ** 2, 0) / areas.length;
+  const counts = new Map();
+  for (const area of areas) counts.set(area, (counts.get(area) || 0) + 1);
+  return { mean, stdev: Math.sqrt(variance), counts };
+}
+
+function histogramConcentration(counts, total) {
+  let sum = 0;
+  for (const count of counts.values()) {
+    const share = count / total;
+    sum += share * share;
+  }
+  return sum;
 }
 
 function buildAssignments() {

@@ -34,10 +34,15 @@
               <option value="20">20 x 20</option>
               <option value="26">26 x 26</option>
             </select>
-            <label class="difficulty">
-              <span>Сложность</span>
-              <input id="difficulty" type="range" min="0" max="100" step="1" value="50" />
-              <output id="difficultyLabel">50/100</output>
+            <label class="tuning">
+              <span>Среднее</span>
+              <input id="meanArea" type="range" min="0" max="100" step="1" value="50" />
+              <output id="meanAreaLabel">50</output>
+            </label>
+            <label class="tuning">
+              <span>Разброс</span>
+              <input id="areaSpread" type="range" min="0" max="100" step="1" value="50" />
+              <output id="areaSpreadLabel">50</output>
             </label>
             <button id="newGame" type="button">Новый уровень</button>
             <button id="undo" type="button">Назад</button>

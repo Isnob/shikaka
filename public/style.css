@@ -135,7 +135,7 @@ input {
   gap: 8px;
 }
 
-.difficulty {
+.tuning {
   min-height: 40px;
   display: grid;
   grid-template-columns: auto 128px minmax(82px, auto);
@@ -148,7 +148,7 @@ input {
   color: var(--muted);
 }
 
-.difficulty input {
+.tuning input {
   min-height: 0;
   width: 128px;
   padding: 0;
@@ -156,7 +156,7 @@ input {
   border: 0;
 }
 
-.difficulty output {
+.tuning output {
   color: var(--ink);
   font-weight: 700;
   white-space: nowrap;
@@ -304,7 +304,7 @@ input {
     justify-content: flex-start;
   }
 
-  .difficulty {
+  .tuning {
     grid-template-columns: 1fr;
     width: min(100%, 300px);
   }
