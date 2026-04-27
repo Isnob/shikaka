@@ -135,6 +135,33 @@ input {
   gap: 8px;
 }
 
+.difficulty {
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: auto 128px minmax(82px, auto);
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.difficulty input {
+  min-height: 0;
+  width: 128px;
+  padding: 0;
+  accent-color: var(--accent);
+  border: 0;
+}
+
+.difficulty output {
+  color: var(--ink);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .workspace {
   max-width: 1180px;
   margin: 0 auto;
@@ -275,6 +302,11 @@ input {
 
   .controls {
     justify-content: flex-start;
+  }
+
+  .difficulty {
+    grid-template-columns: 1fr;
+    width: min(100%, 300px);
   }
 
   .workspace {

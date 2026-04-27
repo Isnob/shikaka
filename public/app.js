@@ -5,6 +5,8 @@ const loginError = document.querySelector("#loginError");
 const board = document.querySelector("#board");
 const statusLine = document.querySelector("#status");
 const sizeSelect = document.querySelector("#size");
+const difficultySlider = document.querySelector("#difficulty");
+const difficultyLabel = document.querySelector("#difficultyLabel");
 const newGameButton = document.querySelector("#newGame");
 const undoButton = document.querySelector("#undo");
 const clearButton = document.querySelector("#clear");
@@ -35,7 +37,11 @@ loginForm.addEventListener("submit", async (event) => {
 });
 
 newGameButton.addEventListener("click", () => {
-  startNewGame(Number(sizeSelect.value));
+  startNewGame(Number(sizeSelect.value), Number(difficultySlider.value));
+});
+
+difficultySlider.addEventListener("input", () => {
+  updateDifficultyLabel(Number(difficultySlider.value));
 });
 
 clearButton.addEventListener("click", () => {
@@ -75,55 +81,92 @@ async function loadGame() {
   if (saved.state) {
     state = normalizeState(saved.state);
   } else {
-    state = makeGame(8);
+    state = makeGame(8, 50);
     await saveState();
   }
   sizeSelect.value = String(state.size);
+  difficultySlider.value = String(state.difficulty);
+  updateDifficultyLabel(state.difficulty);
   render();
 }
 
-function startNewGame(size) {
-  state = makeGame(size);
+function startNewGame(size, difficulty) {
+  state = makeGame(size, difficulty);
   render();
   scheduleSave();
 }
 
-function makeGame(size) {
-  const seed = Math.floor(Math.random() * 2 ** 31);
+function makeGame(size, difficulty) {
+  const candidate = pickGeneratedLevel(size, difficulty);
+  const seed = candidate.seed;
   const rng = mulberry32(seed);
-  const solution = splitRect({ x: 0, y: 0, w: size, h: size }, rng, size);
+  const solution = candidate.solution;
   const clues = solution.map((rect) => ({
     x: rect.x + Math.floor(rng() * rect.w),
     y: rect.y + Math.floor(rng() * rect.h),
     value: rect.w * rect.h
   }));
-  return { size, seed, clues, regions: [], history: [] };
+  return { size, difficulty, seed, clues, regions: [], history: [] };
 }
 
-function splitRect(rect, rng, size) {
-  const maxArea = size <= 6 ? 8 : size <= 8 ? 12 : size <= 10 ? 16 : size <= 20 ? 28 : 36;
+function pickGeneratedLevel(size, difficulty) {
+  const bias = Math.abs(difficulty - 50) / 50;
+  const attempts = Math.max(1, Math.round(1 + bias * 24));
+  let best = null;
+
+  for (let index = 0; index < attempts; index += 1) {
+    const seed = Math.floor(Math.random() * 2 ** 31);
+    const solution = splitRect({ x: 0, y: 0, w: size, h: size }, mulberry32(seed), size, difficulty);
+    const score = scoreSolution(solution, difficulty);
+    if (!best || score < best.score) best = { seed, solution, score };
+  }
+
+  return best;
+}
+
+function scoreSolution(solution, difficulty) {
+  const rightBias = Math.max(0, difficulty - 50) / 50;
+  const leftBias = Math.max(0, 50 - difficulty) / 50;
+
+  if (rightBias > 0) {
+    return solution.reduce((score, rect) => {
+      const area = rect.w * rect.h;
+      if (area === 2) return score + 1000;
+      if (area === 3) return score + 450;
+      if (area <= 5) return score + 80;
+      return score + Math.max(0, 12 - area);
+    }, 0);
+  }
+
+  if (leftBias > 0) return solution.length;
+  return 0;
+}
+
+function splitRect(rect, rng, size, difficulty) {
+  const profile = generatorProfile(size, difficulty);
   const area = rect.w * rect.h;
-  const verticalCuts = possibleCuts(rect.w, rect.h, size);
-  const horizontalCuts = possibleCuts(rect.h, rect.w, size);
+  const verticalCuts = possibleCuts(rect.w, rect.h, size, profile.minArea);
+  const horizontalCuts = possibleCuts(rect.h, rect.w, size, profile.minArea);
   const canVertical = verticalCuts.length > 0;
   const canHorizontal = horizontalCuts.length > 0;
+  const stopChance = stopProbability(area, profile);
 
-  if (area <= maxArea && (area <= 3 || rng() < 0.34)) return [rect];
+  if (area <= profile.maxArea && area >= profile.minArea && rng() < stopChance) return [rect];
   if (!canVertical && !canHorizontal) return [rect];
 
   const splitVertical = canVertical && (!canHorizontal || rng() < rect.w / (rect.w + rect.h));
   if (splitVertical) {
-    const cut = pick(verticalCuts, rng);
+    const cut = pickCut(verticalCuts, rect.w, rect.h, profile, rng);
     return [
-      ...splitRect({ x: rect.x, y: rect.y, w: cut, h: rect.h }, rng, size),
-      ...splitRect({ x: rect.x + cut, y: rect.y, w: rect.w - cut, h: rect.h }, rng, size)
+      ...splitRect({ x: rect.x, y: rect.y, w: cut, h: rect.h }, rng, size, difficulty),
+      ...splitRect({ x: rect.x + cut, y: rect.y, w: rect.w - cut, h: rect.h }, rng, size, difficulty)
     ];
   }
 
-  const cut = pick(horizontalCuts, rng);
+  const cut = pickCut(horizontalCuts, rect.h, rect.w, profile, rng);
   return [
-    ...splitRect({ x: rect.x, y: rect.y, w: rect.w, h: cut }, rng, size),
-    ...splitRect({ x: rect.x, y: rect.y + cut, w: rect.w, h: rect.h - cut }, rng, size)
+    ...splitRect({ x: rect.x, y: rect.y, w: rect.w, h: cut }, rng, size, difficulty),
+    ...splitRect({ x: rect.x, y: rect.y + cut, w: rect.w, h: rect.h - cut }, rng, size, difficulty)
   ];
 }
 
@@ -230,6 +273,7 @@ function updateStatus() {
 function normalizeState(saved) {
   return {
     size: saved.size,
+    difficulty: saved.difficulty ?? 50,
     seed: saved.seed,
     clues: saved.clues || [],
     regions: saved.regions || [],
@@ -241,19 +285,61 @@ function pushHistory() {
   state.history.push(state.regions.map((region) => ({ ...region })));
 }
 
-function possibleCuts(length, otherSide, size) {
+function updateDifficultyLabel(value) {
+  if (value < 35) {
+    difficultyLabel.value = "крупнее";
+  } else if (value > 65) {
+    difficultyLabel.value = "меньше мелочи";
+  } else {
+    difficultyLabel.value = "рандом";
+  }
+}
+
+function generatorProfile(size, difficulty) {
+  const baseMaxArea = size <= 6 ? 8 : size <= 8 ? 12 : size <= 10 ? 16 : size <= 20 ? 28 : 36;
+  const distance = Math.abs(difficulty - 50) / 50;
+  const leftBias = Math.max(0, 50 - difficulty) / 50;
+  const rightBias = Math.max(0, difficulty - 50) / 50;
+
+  return {
+    maxArea: Math.round(baseMaxArea * (1 + leftBias * 4 + rightBias * 1.6)),
+    minArea: Math.round(2 + leftBias * 8),
+    stopBase: 0.34 + leftBias * 0.5 + rightBias * 0.08,
+    areaBias: distance,
+    edgeBias: leftBias + rightBias * 2.5
+  };
+}
+
+function stopProbability(area, profile) {
+  const ratio = Math.min(1, Math.max(0, area / profile.maxArea));
+  return Math.min(0.94, profile.stopBase + profile.areaBias * ratio * 0.42);
+}
+
+function possibleCuts(length, otherSide, size, minArea) {
   const cuts = [];
-  const minPart = size >= 20 ? 2 : 1;
-  for (let cut = minPart; cut <= length - minPart; cut += 1) {
-    if (cut * otherSide > 1 && (length - cut) * otherSide > 1) {
+  for (let cut = 1; cut < length; cut += 1) {
+    if (cut * otherSide >= minArea && (length - cut) * otherSide >= minArea) {
       cuts.push(cut);
     }
   }
   return cuts;
 }
 
-function pick(items, rng) {
-  return items[Math.floor(rng() * items.length)];
+function pickCut(cuts, length, otherSide, profile, rng) {
+  if (profile.edgeBias === 0) return cuts[Math.floor(rng() * cuts.length)];
+
+  const weighted = cuts.map((cut) => {
+    const smallerArea = Math.min(cut, length - cut) * otherSide;
+    const normalized = Math.max(0.01, smallerArea / profile.maxArea);
+    return { cut, weight: Math.pow(normalized, profile.edgeBias * 3) };
+  });
+  const total = weighted.reduce((sum, item) => sum + item.weight, 0);
+  let roll = rng() * total;
+  for (const item of weighted) {
+    roll -= item.weight;
+    if (roll <= 0) return item.cut;
+  }
+  return weighted.at(-1).cut;
 }
 
 function buildAssignments() {
