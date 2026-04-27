@@ -9,6 +9,7 @@ import pg from "pg";
 const { Pool } = pg;
 
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || "0.0.0.0";
 const PASSWORD = process.env.SHIKAKU_PASSWORD || "change-me";
 const DATABASE_URL = process.env.DATABASE_URL || "postgres://localhost:5432/shikaka";
 const SESSION_SECRET = process.env.SESSION_SECRET || randomBytes(32).toString("hex");
@@ -73,8 +74,8 @@ createServer(async (req, res) => {
     console.error(error);
     sendJson(res, 500, { error: "internal_error" });
   }
-}).listen(PORT, () => {
-  console.log(`Shikaka listening on http://localhost:${PORT}`);
+}).listen(PORT, HOST, () => {
+  console.log(`Shikaka listening on http://${HOST}:${PORT}`);
 });
 
 async function initDatabase() {
