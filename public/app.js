@@ -130,16 +130,17 @@ function scoreSolution(solution, difficulty) {
   const leftBias = Math.max(0, 50 - difficulty) / 50;
 
   if (rightBias > 0) {
+    const profile = generatorProfile(Math.sqrt(solution.reduce((sum, rect) => sum + rect.w * rect.h, 0)), difficulty);
+    const targetArea = profile.baseMaxArea * 0.65;
     return solution.reduce((score, rect) => {
       const area = rect.w * rect.h;
-      if (area === 2) return score + 1000;
-      if (area === 3) return score + 450;
-      if (area <= 5) return score + 80;
-      return score + Math.max(0, 12 - area);
+      const smallPenalty = area <= 12 ? Math.pow(13 - area, 2.2) * rightBias : 0;
+      const largePenalty = Math.max(0, area - targetArea * 1.8) * rightBias * 3;
+      return score + smallPenalty + largePenalty;
     }, 0);
   }
 
-  if (leftBias > 0) return solution.length;
+  if (leftBias > 0) return solution.length * leftBias;
   return 0;
 }
 
@@ -314,13 +315,7 @@ function pushHistory() {
 }
 
 function updateDifficultyLabel(value) {
-  if (value < 35) {
-    difficultyLabel.value = "крупнее";
-  } else if (value > 65) {
-    difficultyLabel.value = "меньше мелочи";
-  } else {
-    difficultyLabel.value = "рандом";
-  }
+  difficultyLabel.value = `${value}/100`;
 }
 
 function generatorProfile(size, difficulty) {
@@ -330,11 +325,12 @@ function generatorProfile(size, difficulty) {
   const rightBias = Math.max(0, difficulty - 50) / 50;
 
   return {
-    maxArea: Math.round(baseMaxArea * (1 + leftBias * 4 + rightBias * 1.6)),
+    baseMaxArea,
+    maxArea: Math.round(baseMaxArea * (1 + leftBias * 4 + rightBias * 0.45)),
     minArea: Math.round(2 + leftBias * 8),
-    stopBase: 0.34 + leftBias * 0.5 + rightBias * 0.08,
+    stopBase: 0.34 + leftBias * 0.5,
     areaBias: distance,
-    edgeBias: leftBias + rightBias * 2.5
+    edgeBias: leftBias + rightBias * 4
   };
 }
 
