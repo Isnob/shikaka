@@ -6,6 +6,7 @@ const board = document.querySelector("#board");
 const statusLine = document.querySelector("#status");
 const sizeSelect = document.querySelector("#size");
 const newGameButton = document.querySelector("#newGame");
+const undoButton = document.querySelector("#undo");
 const clearButton = document.querySelector("#clear");
 const logoutButton = document.querySelector("#logout");
 const metaSize = document.querySelector("#metaSize");
@@ -38,7 +39,16 @@ newGameButton.addEventListener("click", () => {
 });
 
 clearButton.addEventListener("click", () => {
+  pushHistory();
   state.regions = [];
+  render();
+  scheduleSave();
+});
+
+undoButton.addEventListener("click", () => {
+  const previous = state.history.pop();
+  if (!previous) return;
+  state.regions = previous;
   render();
   scheduleSave();
 });
@@ -63,7 +73,7 @@ async function loadGame() {
   game.classList.remove("hidden");
   const saved = await api("/api/state");
   if (saved.state) {
-    state = saved.state;
+    state = normalizeState(saved.state);
   } else {
     state = makeGame(8);
     await saveState();
@@ -87,29 +97,30 @@ function makeGame(size) {
     y: rect.y + Math.floor(rng() * rect.h),
     value: rect.w * rect.h
   }));
-  return { size, seed, clues, regions: [] };
+  return { size, seed, clues, regions: [], history: [] };
 }
 
 function splitRect(rect, rng, size) {
-  const maxArea = size <= 6 ? 8 : size <= 8 ? 12 : 16;
-  const minSide = 1;
+  const maxArea = size <= 6 ? 8 : size <= 8 ? 12 : size <= 10 ? 16 : size <= 20 ? 28 : 36;
   const area = rect.w * rect.h;
-  const canVertical = rect.w >= minSide * 2;
-  const canHorizontal = rect.h >= minSide * 2;
+  const verticalCuts = possibleCuts(rect.w, rect.h);
+  const horizontalCuts = possibleCuts(rect.h, rect.w);
+  const canVertical = verticalCuts.length > 0;
+  const canHorizontal = horizontalCuts.length > 0;
 
   if (area <= maxArea && (area <= 3 || rng() < 0.34)) return [rect];
   if (!canVertical && !canHorizontal) return [rect];
 
   const splitVertical = canVertical && (!canHorizontal || rng() < rect.w / (rect.w + rect.h));
   if (splitVertical) {
-    const cut = 1 + Math.floor(rng() * (rect.w - 1));
+    const cut = pick(verticalCuts, rng);
     return [
       ...splitRect({ x: rect.x, y: rect.y, w: cut, h: rect.h }, rng, size),
       ...splitRect({ x: rect.x + cut, y: rect.y, w: rect.w - cut, h: rect.h }, rng, size)
     ];
   }
 
-  const cut = 1 + Math.floor(rng() * (rect.h - 1));
+  const cut = pick(horizontalCuts, rng);
   return [
     ...splitRect({ x: rect.x, y: rect.y, w: rect.w, h: cut }, rng, size),
     ...splitRect({ x: rect.x, y: rect.y + cut, w: rect.w, h: rect.h - cut }, rng, size)
@@ -119,6 +130,7 @@ function splitRect(rect, rng, size) {
 function render() {
   board.innerHTML = "";
   board.style.gridTemplateColumns = `repeat(${state.size}, var(--cell))`;
+  board.dataset.size = String(state.size);
   const assignments = buildAssignments();
   const preview = dragStart && dragEnd ? normalizeRect(dragStart, dragEnd) : null;
   const previewValid = preview ? validateRegion(preview).valid : true;
@@ -182,6 +194,7 @@ function onPointerUp() {
   const rect = normalizeRect(dragStart, dragEnd);
   const result = validateRegion(rect);
   if (result.valid) {
+    pushHistory();
     state.regions = state.regions.filter((region) => !rectsOverlap(region, rect));
     state.regions.push(rect);
     scheduleSave();
@@ -211,6 +224,35 @@ function updateStatus() {
   metaCovered.textContent = `${percent}%`;
   statusLine.textContent = solved ? "Готово: уровень решен" : "Выдели все прямоугольники";
   statusLine.style.color = solved ? "var(--good)" : "var(--muted)";
+  undoButton.disabled = state.history.length === 0;
+}
+
+function normalizeState(saved) {
+  return {
+    size: saved.size,
+    seed: saved.seed,
+    clues: saved.clues || [],
+    regions: saved.regions || [],
+    history: saved.history || []
+  };
+}
+
+function pushHistory() {
+  state.history.push(state.regions.map((region) => ({ ...region })));
+}
+
+function possibleCuts(length, otherSide) {
+  const cuts = [];
+  for (let cut = 1; cut < length; cut += 1) {
+    if (cut * otherSide > 1 && (length - cut) * otherSide > 1) {
+      cuts.push(cut);
+    }
+  }
+  return cuts;
+}
+
+function pick(items, rng) {
+  return items[Math.floor(rng() * items.length)];
 }
 
 function buildAssignments() {

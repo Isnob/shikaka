@@ -50,6 +50,11 @@ button:hover {
   background: var(--accent-dark);
 }
 
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 select,
 input {
   min-height: 40px;
@@ -170,6 +175,23 @@ input {
   cursor: crosshair;
 }
 
+.board[data-size="20"] .cell {
+  width: min(4.4vw, 34px);
+  height: min(4.4vw, 34px);
+  font-size: 14px;
+}
+
+.board[data-size="26"] .cell {
+  width: min(3.5vw, 28px);
+  height: min(3.5vw, 28px);
+  font-size: 12px;
+}
+
+.board[data-size="20"] .cell.clue::after,
+.board[data-size="26"] .cell.clue::after {
+  inset: 4px;
+}
+
 .cell.clue::after {
   content: "";
   position: absolute;
@@ -232,6 +254,16 @@ input {
 @media (max-width: 820px) {
   :root {
     --cell: min(12vw, 52px);
+  }
+
+  .board[data-size="20"] .cell {
+    width: 32px;
+    height: 32px;
+  }
+
+  .board[data-size="26"] .cell {
+    width: 28px;
+    height: 28px;
   }
 
   .topbar {
