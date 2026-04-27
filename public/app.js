@@ -21,6 +21,7 @@ let state = null;
 let dragStart = null;
 let dragEnd = null;
 let saveTimer = null;
+let lastTap = null;
 
 boot();
 
@@ -206,6 +207,7 @@ function render() {
       }
 
       cell.addEventListener("pointerdown", onPointerDown);
+      cell.addEventListener("dblclick", onCellDoubleClick);
       board.append(cell);
     }
   }
@@ -215,12 +217,38 @@ function render() {
 
 function onPointerDown(event) {
   const point = pointFromCell(event.currentTarget);
+  if (isDoubleTap(point)) {
+    removeRegionAt(point);
+    lastTap = null;
+    return;
+  }
+  lastTap = { ...point, time: Date.now() };
   dragStart = point;
   dragEnd = point;
   board.setPointerCapture(event.pointerId);
   board.addEventListener("pointermove", onPointerMove);
   board.addEventListener("pointerup", onPointerUp, { once: true });
   render();
+}
+
+function onCellDoubleClick(event) {
+  removeRegionAt(pointFromCell(event.currentTarget));
+}
+
+function isDoubleTap(point) {
+  const now = Date.now();
+  return Boolean(lastTap && lastTap.x === point.x && lastTap.y === point.y && now - lastTap.time < 320);
+}
+
+function removeRegionAt(point) {
+  const index = state.regions.findIndex((region) => contains(region, point.x, point.y));
+  if (index === -1) return;
+  pushHistory();
+  state.regions.splice(index, 1);
+  dragStart = null;
+  dragEnd = null;
+  render();
+  scheduleSave();
 }
 
 function onPointerMove(event) {
