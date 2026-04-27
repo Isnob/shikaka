@@ -1,35 +1,69 @@
-# Shikaka
+# 🟦 Shikaka
 
-Single-user Shikaku web game with password login and PostgreSQL-backed progress.
+Minimalist, single-user implementation of the **Shikaku** (Rectangles) puzzle game.
 
-## Run locally
+Shikaku is a logic puzzle where you divide a grid into rectangular and square pieces such that each piece contains exactly one number, and that number represents the area of the rectangle.
 
-```bash
-npm install
-createdb shikaka
-SHIKAKU_PASSWORD=your-password DATABASE_URL=postgres://localhost:5432/shikaka npm start
-```
+## ✨ Features
 
-Open `http://localhost:3000`.
+- **Responsive Design**: Play comfortably on desktop or mobile.
+- **Progress Persistence**: Your game state is saved automatically in a PostgreSQL database.
+- **Secure Access**: Simple password-based authentication for private instances.
+- **Minimalist Tech Stack**: Built with Vanilla JS and Node.js for maximum performance and zero bloat.
 
-If `SHIKAKU_PASSWORD` is not set, the development password is `change-me`.
+## 🛠 Tech Stack
 
-## Server deploy notes
+- **Backend**: Node.js (Native modules + `pg`)
+- **Database**: PostgreSQL
+- **Frontend**: HTML5, CSS3, Vanilla JavaScript
 
-The app does not require DNS. It can run on the server directly:
+## 🚀 Getting Started
 
-```bash
-PORT=3000 \
-SHIKAKU_PASSWORD='replace-this' \
-SESSION_SECRET='replace-with-a-long-random-string' \
-DATABASE_URL='postgres://user:password@localhost:5432/shikaka' \
-npm start
-```
+### Prerequisites
 
-Use SSH port forwarding if you do not want to expose HTTP:
+- Node.js (v18 or higher)
+- PostgreSQL
 
-```bash
-ssh -L 3000:localhost:3000 -l bogdan 111.88.150.78
-```
+### Installation
 
-Then open `http://localhost:3000` on your machine.
+1. **Clone the repository:**
+   ```bash
+   git clone git@github.com:Isnob/shikaka.git
+   cd shikaka
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Database setup:**
+   Create a database named `shikaka`:
+   ```bash
+   createdb shikaka
+   ```
+
+4. **Configuration:**
+   Copy the example environment file and fill in your details:
+   ```bash
+   cp .env.example .env
+   ```
+
+5. **Start the application:**
+   ```bash
+   npm start
+   ```
+   Open `http://localhost:3000` in your browser.
+
+## ⚙️ Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | Port to run the server on | `3000` |
+| `SHIKAKU_PASSWORD` | Access password for the game | `change-me` |
+| `DATABASE_URL` | PostgreSQL connection string | `postgres://localhost:5432/shikaka` |
+| `SESSION_SECRET` | Secret key for session hashing | (randomly generated) |
+
+## 📜 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
