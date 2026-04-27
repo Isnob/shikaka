@@ -162,7 +162,7 @@ function splitRect(rect, rng, size, tuning) {
   const horizontalCuts = possibleCuts(rect.h, rect.w, size, profile.minArea);
   const canVertical = verticalCuts.length > 0;
   const canHorizontal = horizontalCuts.length > 0;
-  const stopChance = stopProbability(area, profile);
+  const stopChance = stopProbability(area, profile, rect);
 
   if (area <= profile.maxArea && area >= profile.minArea && rng() < stopChance) return [rect];
   if (!canVertical && !canHorizontal) return [rect];
@@ -361,9 +361,11 @@ function generatorProfile(size, tuning) {
   };
 }
 
-function stopProbability(area, profile) {
+function stopProbability(area, profile, rect) {
   const ratio = Math.min(1, Math.max(0, area / profile.maxArea));
-  return Math.max(0.04, Math.min(0.94, profile.stopBase + profile.stopSlope * ratio));
+  const aspect = Math.max(rect.w / rect.h, rect.h / rect.w);
+  const aspectPenalty = aspect > 2.2 ? 0.05 : 1.0;
+  return Math.max(0.04, Math.min(0.94, (profile.stopBase + profile.stopSlope * ratio) * aspectPenalty));
 }
 
 function possibleCuts(length, otherSide, size, minArea) {
@@ -384,7 +386,12 @@ function pickCut(cuts, length, otherSide, profile, rng) {
     const targetDistance = Math.abs(smallerArea - profile.targetMean) / profile.targetStdev;
     const tinyPenalty = tinyAreaPenalty(leftArea) * tinyAreaPenalty(rightArea);
     const balance = Math.max(0.2, smallerArea / Math.max(leftArea, rightArea));
-    return { cut, weight: tinyPenalty * balance * Math.exp(-targetDistance * profile.edgeBias) };
+
+    const leftAspect = Math.max(cut / otherSide, otherSide / cut);
+    const rightAspect = Math.max((length - cut) / otherSide, otherSide / (length - cut));
+    const shapeBonus = Math.exp(-(leftAspect + rightAspect) * 0.4);
+
+    return { cut, weight: tinyPenalty * balance * shapeBonus * Math.exp(-targetDistance * profile.edgeBias) };
   });
   const total = weighted.reduce((sum, item) => sum + item.weight, 0);
   let roll = rng() * total;
