@@ -9,7 +9,7 @@
   --accent-dark: #155c55;
   --bad: #b33328;
   --good: #237044;
-  --cell: min(9.5vw, 64px);
+  --board-cell: min(9.5vw, 64px);
 }
 
 * {
@@ -164,8 +164,8 @@ input {
 
 .cell {
   position: relative;
-  width: var(--cell);
-  height: var(--cell);
+  width: var(--board-cell);
+  height: var(--board-cell);
   display: grid;
   place-items: center;
   background: #fffdf8;
@@ -176,14 +176,12 @@ input {
 }
 
 .board[data-size="20"] .cell {
-  width: min(4.4vw, 34px);
-  height: min(4.4vw, 34px);
+  --board-cell: min(4.4vw, 34px);
   font-size: 14px;
 }
 
 .board[data-size="26"] .cell {
-  width: min(3.5vw, 28px);
-  height: min(3.5vw, 28px);
+  --board-cell: min(3.5vw, 28px);
   font-size: 12px;
 }
 
@@ -253,17 +251,15 @@ input {
 
 @media (max-width: 820px) {
   :root {
-    --cell: min(12vw, 52px);
+    --board-cell: min(12vw, 52px);
   }
 
   .board[data-size="20"] .cell {
-    width: 32px;
-    height: 32px;
+    --board-cell: 32px;
   }
 
   .board[data-size="26"] .cell {
-    width: 28px;
-    height: 28px;
+    --board-cell: 28px;
   }
 
   .topbar {

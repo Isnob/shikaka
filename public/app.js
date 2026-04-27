@@ -103,8 +103,8 @@ function makeGame(size) {
 function splitRect(rect, rng, size) {
   const maxArea = size <= 6 ? 8 : size <= 8 ? 12 : size <= 10 ? 16 : size <= 20 ? 28 : 36;
   const area = rect.w * rect.h;
-  const verticalCuts = possibleCuts(rect.w, rect.h);
-  const horizontalCuts = possibleCuts(rect.h, rect.w);
+  const verticalCuts = possibleCuts(rect.w, rect.h, size);
+  const horizontalCuts = possibleCuts(rect.h, rect.w, size);
   const canVertical = verticalCuts.length > 0;
   const canHorizontal = horizontalCuts.length > 0;
 
@@ -129,8 +129,8 @@ function splitRect(rect, rng, size) {
 
 function render() {
   board.innerHTML = "";
-  board.style.gridTemplateColumns = `repeat(${state.size}, var(--cell))`;
   board.dataset.size = String(state.size);
+  board.style.gridTemplateColumns = `repeat(${state.size}, var(--board-cell))`;
   const assignments = buildAssignments();
   const preview = dragStart && dragEnd ? normalizeRect(dragStart, dragEnd) : null;
   const previewValid = preview ? validateRegion(preview).valid : true;
@@ -241,9 +241,10 @@ function pushHistory() {
   state.history.push(state.regions.map((region) => ({ ...region })));
 }
 
-function possibleCuts(length, otherSide) {
+function possibleCuts(length, otherSide, size) {
   const cuts = [];
-  for (let cut = 1; cut < length; cut += 1) {
+  const minPart = size >= 20 ? 2 : 1;
+  for (let cut = minPart; cut <= length - minPart; cut += 1) {
     if (cut * otherSide > 1 && (length - cut) * otherSide > 1) {
       cuts.push(cut);
     }
