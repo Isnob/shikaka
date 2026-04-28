@@ -193,6 +193,7 @@ async function makeGame(size, tuning) {
   return {
     size: level.size,
     tuning: level.tuning,
+    levelTuning: level.tuning,
     seed: level.seed,
     clues: level.clues,
     solution: null,
@@ -475,14 +476,16 @@ function updateStatus() {
 }
 
 function normalizeState(saved) {
-  const tuning = saved.tuning || {
+  const sourceTuning = saved.tuning || {
     meanArea: saved.difficulty ?? defaultTuning.meanArea,
     areaSpread: defaultTuning.areaSpread
   };
+  const tuning = normalizeTuning(sourceTuning);
 
   return {
     size: saved.size,
-    tuning: normalizeTuning(tuning),
+    tuning,
+    levelTuning: normalizeLevelTuning(saved.levelTuning || sourceTuning, tuning),
     seed: saved.seed,
     clues: saved.clues || [],
     solution: saved.solution || null,
@@ -491,7 +494,9 @@ function normalizeState(saved) {
     startedAt: saved.startedAt || Date.now(),
     solvedAt: saved.solvedAt || null,
     usedSolution: Boolean(saved.usedSolution),
-    scoreSubmitted: Boolean(saved.scoreSubmitted)
+    scoreSubmitted: Boolean(saved.scoreSubmitted),
+    scoreError: saved.scoreError || null,
+    scoreSubmitting: false
   };
 }
 
@@ -534,6 +539,15 @@ function normalizeTuning(tuning) {
     meanArea: normalizeTuningValue(tuning.meanArea, defaultTuning.meanArea),
     areaSpread: normalizeTuningValue(tuning.areaSpread, defaultTuning.areaSpread)
   };
+}
+
+function normalizeLevelTuning(levelTuning, displayTuning) {
+  const meanArea = Number(levelTuning.meanArea);
+  const areaSpread = Number(levelTuning.areaSpread);
+  if (Number.isInteger(meanArea) && Number.isInteger(areaSpread)) {
+    return { meanArea, areaSpread };
+  }
+  return displayTuning;
 }
 
 function normalizeTuningValue(value, fallback) {
@@ -698,30 +712,47 @@ function formatElapsed(ms) {
 function solvedStatusText() {
   if (state.usedSolution) return "Решение показано: результат не засчитан";
   if (isGuest) return "Готово: войди через Google, чтобы попасть в таблицу";
+  if (state.scoreError) return scoreErrorText(state.scoreError);
   return state.scoreSubmitted ? "Готово: результат засчитан" : "Готово: отправляю результат";
 }
 
 async function submitScoreIfEligible() {
-  if (isGuest || state.usedSolution || state.scoreSubmitted) return;
+  if (isGuest || state.usedSolution || state.scoreSubmitted || state.scoreSubmitting || state.scoreError) return;
+  state.scoreSubmitting = true;
+  const scoreTuning = state.levelTuning || state.tuning;
   const response = await api("/api/score", {
     method: "POST",
     body: {
       size: state.size,
       seed: String(state.seed),
-      meanArea: state.tuning.meanArea,
-      areaSpread: state.tuning.areaSpread,
+      meanArea: scoreTuning.meanArea,
+      areaSpread: scoreTuning.areaSpread,
       elapsedMs: elapsedMs(),
       usedSolution: state.usedSolution,
       clues: state.clues,
       regions: state.regions
     }
   });
+  state.scoreSubmitting = false;
   if (response.ok) {
     state.scoreSubmitted = true;
+    state.scoreError = null;
     await saveState();
     await loadLeaderboard();
     render();
+    return;
   }
+  state.scoreError = response.error || "score_failed";
+  await saveState();
+  render();
+}
+
+function scoreErrorText(error) {
+  if (error === "unknown_level") return "Готово: старый уровень не засчитывается, начни новый";
+  if (error === "solution_revealed") return "Решение было открыто: результат не засчитан";
+  if (error === "invalid_solution") return "Готово: сервер не принял решение";
+  if (error === "unauthorized") return "Готово: войди через Google, чтобы попасть в таблицу";
+  return "Готово: результат не отправился";
 }
 
 async function loadLeaderboard() {

@@ -305,14 +305,24 @@ async function handleGetSolution(req, res) {
 }
 
 async function findLevel(size, seed, meanArea, areaSpread) {
-  const result = await pool.query(
+  const exact = await pool.query(
     `select payload
      from shikaka_levels
      where size = $1 and seed = $2 and mean_area = $3 and area_spread = $4
      limit 1`,
     [size, seed, meanArea, areaSpread]
   );
-  return result.rows[0]?.payload || null;
+  if (exact.rows[0]?.payload) return exact.rows[0].payload;
+
+  const bySeed = await pool.query(
+    `select payload
+     from shikaka_levels
+     where size = $1 and seed = $2
+     order by created_at desc
+     limit 1`,
+    [size, seed]
+  );
+  return bySeed.rows[0]?.payload || null;
 }
 
 async function hasReveal(userKey, size, seed, meanArea, areaSpread) {
