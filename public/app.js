@@ -65,6 +65,12 @@ areaSpreadSlider.addEventListener("input", () => {
   updateTuningLabels();
 });
 
+for (const slider of [meanAreaSlider, areaSpreadSlider]) {
+  slider.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
+}
+
 clearButton.addEventListener("click", () => {
   pushHistory();
   state.regions = [];
