@@ -225,11 +225,13 @@ function scoreSolution(solution, tuning) {
   const profile = generatorProfile(size, tuning);
   const stats = areaStats(solution);
   const meanError = Math.abs(stats.mean - profile.targetMean) / profile.targetMean;
-  const spreadError = Math.abs(stats.stdev - profile.targetStdev) / Math.max(1, profile.targetStdev);
+  const spreadError = Math.abs(stats.stdev - profile.targetStdev) / Math.max(0.75, profile.targetStdev);
   const duplicatePenalty = histogramConcentration(stats.counts, solution.length);
+  const duplicateWeight = profile.spreadRatio < 0.2 ? 80 * (profile.spreadRatio / 0.2) : 80;
   const tinyPenalty = (stats.counts.get(2) || 0) / solution.length;
+  const spreadWeight = 55 + (1 - profile.spreadRatio) * 220;
 
-  return meanError * 90 + spreadError * 55 + duplicatePenalty * 80 + tinyPenalty * 24;
+  return meanError * 90 + spreadError * spreadWeight + duplicatePenalty * duplicateWeight + tinyPenalty * 24;
 }
 
 function splitRect(rect, rng, size, tuning) {
@@ -521,13 +523,14 @@ function generatorProfile(size, tuning) {
   const meanRatio = tuning.meanArea / tuningMax;
   const spreadRatio = tuning.areaSpread / tuningMax;
   const targetMean = 3 + baseMaxArea * (0.22 + meanRatio * 1.75);
-  const targetStdev = 1.2 + targetMean * (0.12 + spreadRatio * 0.95);
+  const targetStdev = spreadRatio === 0 ? 0 : Math.max(0.35, targetMean * spreadRatio * 1.05);
 
   return {
     maxArea: Math.max(4, Math.round(targetMean + targetStdev * 2.3)),
     minArea: targetMean < 5 ? 2 : 3,
     targetMean,
     targetStdev,
+    spreadRatio,
     stopBase: Math.max(0.08, Math.min(0.82, 0.18 + meanRatio * 0.48)),
     stopSlope: Math.max(0.12, 0.62 - meanRatio * 0.24),
     edgeBias: 0.85 + (1 - spreadRatio) * 1.35
@@ -579,7 +582,7 @@ function pickCut(cuts, length, otherSide, profile, rng) {
     const leftArea = cut * otherSide;
     const rightArea = (length - cut) * otherSide;
     const smallerArea = Math.min(leftArea, rightArea);
-    const targetDistance = Math.abs(smallerArea - profile.targetMean) / profile.targetStdev;
+    const targetDistance = Math.abs(smallerArea - profile.targetMean) / Math.max(0.75, profile.targetStdev);
     const tinyPenalty = tinyAreaPenalty(leftArea) * tinyAreaPenalty(rightArea);
     const balance = Math.max(0.2, smallerArea / Math.max(leftArea, rightArea));
 

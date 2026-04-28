@@ -12,15 +12,15 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const PASSWORD = process.env.SHIKAKU_PASSWORD || "change-me";
 const DATABASE_URL = process.env.DATABASE_URL || "postgres://localhost:5432/shikaka";
-const SESSION_SECRET = process.env.SESSION_SECRET || randomBytes(32).toString("hex");
+const SESSION_SECRET = process.env.SESSION_SECRET || "dev-session-secret-change-me";
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
 const PUBLIC_DIR = fileURLToPath(new URL("./public", import.meta.url));
 const STATE_KEY = "solo";
 const TUNING_MAX = 30;
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
-const sessions = new Map();
 const pool = new Pool({ connectionString: DATABASE_URL });
 
 const mimeTypes = new Map([
@@ -52,12 +52,12 @@ createServer(async (req, res) => {
     }
 
     if (req.url === "/api/logout" && req.method === "POST") {
-      handleLogout(req, res);
+      await handleLogout(req, res);
       return;
     }
 
     if (req.url === "/api/me" && req.method === "GET") {
-      const auth = getAuth(req);
+      const auth = await getAuth(req);
       sendJson(res, 200, {
         authenticated: Boolean(auth),
         googleConfigured: isGoogleConfigured(),
@@ -81,7 +81,7 @@ createServer(async (req, res) => {
       return;
     }
 
-    const auth = getAuth(req);
+    const auth = await getAuth(req);
     if (!auth) {
       if (req.url?.startsWith("/api/")) {
         sendJson(res, 401, { error: "unauthorized" });
@@ -172,6 +172,16 @@ async function initDatabase() {
       primary key (user_key, size, seed, mean_area, area_spread)
     )
   `);
+  await pool.query(`
+    create table if not exists shikaka_sessions (
+      session_hash text primary key,
+      payload jsonb not null,
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await pool.query("delete from shikaka_sessions where expires_at <= now()");
 }
 
 async function handleLogin(req, res) {
@@ -184,7 +194,7 @@ async function handleLogin(req, res) {
   }
 
   const sessionId = randomBytes(32).toString("hex");
-  sessions.set(sessionId, {
+  await storeSession(sessionId, {
     stateKey: STATE_KEY,
     user: { provider: "password", name: "Password user" }
   });
@@ -275,7 +285,7 @@ async function handleCreateLevel(req, res) {
 }
 
 async function handleGetSolution(req, res) {
-  const auth = getAuth(req);
+  const auth = await getAuth(req);
   if (!auth) {
     sendJson(res, 401, { error: "unauthorized" });
     return;
@@ -416,11 +426,13 @@ function scoreSolution(solution, tuning) {
   const profile = generatorProfile(size, tuning);
   const stats = areaStats(solution);
   const meanError = Math.abs(stats.mean - profile.targetMean) / profile.targetMean;
-  const spreadError = Math.abs(stats.stdev - profile.targetStdev) / Math.max(1, profile.targetStdev);
+  const spreadError = Math.abs(stats.stdev - profile.targetStdev) / Math.max(0.75, profile.targetStdev);
   const duplicatePenalty = histogramConcentration(stats.counts, solution.length);
+  const duplicateWeight = profile.spreadRatio < 0.2 ? 80 * (profile.spreadRatio / 0.2) : 80;
   const tinyPenalty = (stats.counts.get(2) || 0) / solution.length;
+  const spreadWeight = 55 + (1 - profile.spreadRatio) * 220;
 
-  return meanError * 90 + spreadError * 55 + duplicatePenalty * 80 + tinyPenalty * 24;
+  return meanError * 90 + spreadError * spreadWeight + duplicatePenalty * duplicateWeight + tinyPenalty * 24;
 }
 
 function splitRect(rect, rng, size, tuning) {
@@ -456,13 +468,14 @@ function generatorProfile(size, tuning) {
   const meanRatio = tuning.meanArea / TUNING_MAX;
   const spreadRatio = tuning.areaSpread / TUNING_MAX;
   const targetMean = 3 + baseMaxArea * (0.22 + meanRatio * 1.75);
-  const targetStdev = 1.2 + targetMean * (0.12 + spreadRatio * 0.95);
+  const targetStdev = spreadRatio === 0 ? 0 : Math.max(0.35, targetMean * spreadRatio * 1.05);
 
   return {
     maxArea: Math.max(4, Math.round(targetMean + targetStdev * 2.3)),
     minArea: targetMean < 5 ? 2 : 3,
     targetMean,
     targetStdev,
+    spreadRatio,
     stopBase: Math.max(0.08, Math.min(0.82, 0.18 + meanRatio * 0.48)),
     stopSlope: Math.max(0.12, 0.62 - meanRatio * 0.24),
     edgeBias: 0.85 + (1 - spreadRatio) * 1.35
@@ -491,7 +504,7 @@ function pickCut(cuts, length, otherSide, profile, rng) {
     const leftArea = cut * otherSide;
     const rightArea = (length - cut) * otherSide;
     const smallerArea = Math.min(leftArea, rightArea);
-    const targetDistance = Math.abs(smallerArea - profile.targetMean) / profile.targetStdev;
+    const targetDistance = Math.abs(smallerArea - profile.targetMean) / Math.max(0.75, profile.targetStdev);
     const tinyPenalty = tinyAreaPenalty(leftArea) * tinyAreaPenalty(rightArea);
     const balance = Math.max(0.2, smallerArea / Math.max(leftArea, rightArea));
     const leftAspect = Math.max(cut / otherSide, otherSide / cut);
@@ -638,7 +651,7 @@ async function handleGoogleCallback(req, res) {
   );
 
   const sessionId = randomBytes(32).toString("hex");
-  sessions.set(sessionId, {
+  await storeSession(sessionId, {
     stateKey: `google:${googleSub}`,
     user: {
       provider: "google",
@@ -657,9 +670,9 @@ async function handleGoogleCallback(req, res) {
   res.end();
 }
 
-function handleLogout(req, res) {
+async function handleLogout(req, res) {
   const sessionId = readSignedSession(req);
-  if (sessionId) sessions.delete(sessionId);
+  if (sessionId) await deleteSession(sessionId);
   res.setHeader("Set-Cookie", "sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
   sendJson(res, 200, { ok: true });
 }
@@ -710,13 +723,39 @@ async function serveStatic(req, res) {
   }
 }
 
-function isAuthenticated(req) {
-  return Boolean(getAuth(req));
+async function getAuth(req) {
+  const sessionId = readSignedSession(req);
+  if (!sessionId) return null;
+  const sessionHash = hashSessionId(sessionId);
+  const result = await pool.query(
+    `select payload
+     from shikaka_sessions
+     where session_hash = $1 and expires_at > now()
+     limit 1`,
+    [sessionHash]
+  );
+  return result.rows[0]?.payload || null;
 }
 
-function getAuth(req) {
-  const sessionId = readSignedSession(req);
-  return sessionId ? sessions.get(sessionId) || null : null;
+async function storeSession(sessionId, payload) {
+  const sessionHash = hashSessionId(sessionId);
+  await pool.query(
+    `insert into shikaka_sessions (session_hash, payload, expires_at, created_at, updated_at)
+     values ($1, $2, now() + ($3::text || ' seconds')::interval, now(), now())
+     on conflict (session_hash) do update
+     set payload = excluded.payload,
+         expires_at = excluded.expires_at,
+         updated_at = now()`,
+    [sessionHash, payload, SESSION_MAX_AGE_SECONDS]
+  );
+}
+
+async function deleteSession(sessionId) {
+  await pool.query("delete from shikaka_sessions where session_hash = $1", [hashSessionId(sessionId)]);
+}
+
+function hashSessionId(sessionId) {
+  return createHash("sha256").update(`${SESSION_SECRET}:session:${sessionId}`).digest("hex");
 }
 
 function readSignedSession(req) {
@@ -753,7 +792,7 @@ function parseCookies(header) {
   );
 }
 
-function cookieHeader(name, value, maxAge = 60 * 60 * 24 * 30) {
+function cookieHeader(name, value, maxAge = SESSION_MAX_AGE_SECONDS) {
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
 }
 
