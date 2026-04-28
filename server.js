@@ -65,6 +65,11 @@ createServer(async (req, res) => {
       return;
     }
 
+    if (req.url === "/api/leaderboard" && req.method === "GET") {
+      await handleGetLeaderboard(res);
+      return;
+    }
+
     const auth = getAuth(req);
     if (!auth) {
       if (req.url?.startsWith("/api/")) {
@@ -80,6 +85,11 @@ createServer(async (req, res) => {
 
     if (req.url === "/api/state" && req.method === "PUT") {
       await handlePutState(req, res, auth);
+      return;
+    }
+
+    if (req.url === "/api/score" && req.method === "POST") {
+      await handlePostScore(req, res, auth);
       return;
     }
 
@@ -114,6 +124,20 @@ async function initDatabase() {
       updated_at timestamptz not null default now()
     )
   `);
+  await pool.query(`
+    create table if not exists shikaka_scores (
+      id bigserial primary key,
+      user_key text not null,
+      display_name text not null,
+      size integer not null,
+      seed text not null,
+      mean_area integer not null,
+      area_spread integer not null,
+      elapsed_ms integer not null,
+      created_at timestamptz not null default now(),
+      unique (user_key, size, seed)
+    )
+  `);
 }
 
 async function handleLogin(req, res) {
@@ -132,6 +156,51 @@ async function handleLogin(req, res) {
   });
   res.setHeader("Set-Cookie", cookieHeader("sid", signSession(sessionId)));
   sendJson(res, 200, { ok: true });
+}
+
+async function handlePostScore(req, res, auth) {
+  const body = await readJson(req, 32_768);
+  const size = Number(body.size);
+  const meanArea = Number(body.meanArea);
+  const areaSpread = Number(body.areaSpread);
+  const elapsedMs = Number(body.elapsedMs);
+  const seed = String(body.seed || "");
+
+  if (
+    !Number.isInteger(size) ||
+    !Number.isInteger(meanArea) ||
+    !Number.isInteger(areaSpread) ||
+    !Number.isInteger(elapsedMs) ||
+    size <= 0 ||
+    elapsedMs <= 0 ||
+    !seed
+  ) {
+    sendJson(res, 400, { error: "bad_score" });
+    return;
+  }
+
+  const displayName = auth.user?.name || auth.user?.email || "Player";
+  await pool.query(
+    `insert into shikaka_scores (user_key, display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at)
+     values ($1, $2, $3, $4, $5, $6, $7, now())
+     on conflict (user_key, size, seed) do update
+     set elapsed_ms = least(shikaka_scores.elapsed_ms, excluded.elapsed_ms),
+         display_name = excluded.display_name,
+         mean_area = excluded.mean_area,
+         area_spread = excluded.area_spread`,
+    [auth.stateKey, displayName, size, seed, meanArea, areaSpread, elapsedMs]
+  );
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleGetLeaderboard(res) {
+  const result = await pool.query(`
+    select display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
+    from shikaka_scores
+    order by elapsed_ms asc, created_at asc
+    limit 20
+  `);
+  sendJson(res, 200, { scores: result.rows });
 }
 
 function handleGoogleStart(req, res) {

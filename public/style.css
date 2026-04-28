@@ -100,7 +100,8 @@ input {
   color: var(--muted);
 }
 
-.login button {
+.login button,
+.guestLogin {
   width: 100%;
 }
 
@@ -118,6 +119,16 @@ input {
 
 .googleLogin:hover {
   border-color: var(--accent);
+}
+
+.guestLogin {
+  margin-top: 10px;
+  color: var(--accent);
+  background: transparent;
+}
+
+.guestLogin:hover {
+  color: white;
 }
 
 .error {
@@ -296,6 +307,42 @@ input {
   margin: 0;
   color: var(--muted);
   line-height: 1.45;
+}
+
+.leaderboard {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #e5ded1;
+}
+
+.leaderboard h3 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+.leaderboard ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.leaderboard li {
+  color: var(--muted);
+}
+
+.leaderboard li span,
+.leaderboard li small {
+  display: block;
+}
+
+.leaderboard li span {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.leaderboard li small {
+  margin-top: 2px;
 }
 
 @media (max-width: 820px) {

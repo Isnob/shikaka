@@ -3,6 +3,7 @@ const game = document.querySelector("#game");
 const loginForm = document.querySelector("#loginForm");
 const loginError = document.querySelector("#loginError");
 const googleLogin = document.querySelector("#googleLogin");
+const guestLogin = document.querySelector("#guestLogin");
 const board = document.querySelector("#board");
 const statusLine = document.querySelector("#status");
 const sizeSelect = document.querySelector("#size");
@@ -18,14 +19,21 @@ const logoutButton = document.querySelector("#logout");
 const metaSize = document.querySelector("#metaSize");
 const metaSeed = document.querySelector("#metaSeed");
 const metaCovered = document.querySelector("#metaCovered");
+const metaTime = document.querySelector("#metaTime");
+const metaMode = document.querySelector("#metaMode");
+const leaderboardList = document.querySelector("#leaderboard");
 
 const palette = ["#f7c6bd", "#f2d377", "#9fd8cb", "#a8c8f2", "#d7b6e8", "#b8d98b", "#f4b06a", "#b7c4d8"];
+const guestStorageKey = "shikaka:guest-state";
 
 let state = null;
+let currentUser = null;
+let isGuest = false;
 let dragStart = null;
 let dragEnd = null;
 let saveTimer = null;
 let lastTap = null;
+let clockTimer = null;
 
 boot();
 
@@ -39,6 +47,10 @@ loginForm.addEventListener("submit", async (event) => {
     return;
   }
   await loadGame();
+});
+
+guestLogin.addEventListener("click", async () => {
+  await loadGame({ guest: true });
 });
 
 newGameButton.addEventListener("click", () => {
@@ -67,6 +79,7 @@ solveButton.addEventListener("click", () => {
   }
   pushHistory();
   state.regions = state.solution.map((rect) => ({ ...rect }));
+  state.usedSolution = true;
   render();
   scheduleSave();
 });
@@ -80,7 +93,10 @@ undoButton.addEventListener("click", () => {
 });
 
 logoutButton.addEventListener("click", async () => {
-  await api("/api/logout", { method: "POST" });
+  if (!isGuest) await api("/api/logout", { method: "POST" });
+  stopClock();
+  currentUser = null;
+  isGuest = false;
   game.classList.add("hidden");
   login.classList.remove("hidden");
 });
@@ -89,26 +105,37 @@ async function boot() {
   const me = await api("/api/me");
   googleLogin.classList.toggle("hidden", !me.googleConfigured);
   if (me.authenticated) {
-    await loadGame();
+    currentUser = me.user;
+    await loadGame({ guest: false });
   } else {
     login.classList.remove("hidden");
   }
+  await loadLeaderboard();
 }
 
-async function loadGame() {
+async function loadGame({ guest = false } = {}) {
+  isGuest = guest;
   login.classList.add("hidden");
   game.classList.remove("hidden");
-  const saved = await api("/api/state");
-  if (saved.state) {
-    state = normalizeState(saved.state);
+
+  if (isGuest) {
+    const saved = loadGuestState();
+    state = saved ? normalizeState(saved) : makeGame(8, { meanArea: 50, areaSpread: 50 });
   } else {
-    state = makeGame(8, { meanArea: 50, areaSpread: 50 });
-    await saveState();
+    const saved = await api("/api/state");
+    if (saved.state) {
+      state = normalizeState(saved.state);
+    } else {
+      state = makeGame(8, { meanArea: 50, areaSpread: 50 });
+      await saveState();
+    }
   }
+
   sizeSelect.value = String(state.size);
   meanAreaSlider.value = String(state.tuning.meanArea);
   areaSpreadSlider.value = String(state.tuning.areaSpread);
   updateTuningLabels();
+  startClock();
   render();
 }
 
@@ -128,7 +155,19 @@ function makeGame(size, tuning) {
     y: rect.y + Math.floor(rng() * rect.h),
     value: rect.w * rect.h
   }));
-  return { size, tuning, seed, clues, solution, regions: [], history: [] };
+  return {
+    size,
+    tuning,
+    seed,
+    clues,
+    solution,
+    regions: [],
+    history: [],
+    startedAt: Date.now(),
+    solvedAt: null,
+    usedSolution: false,
+    scoreSubmitted: false
+  };
 }
 
 function pickGeneratedLevel(size, tuning) {
@@ -303,11 +342,19 @@ function updateStatus() {
   const covered = assignments.size;
   const percent = Math.round((covered / total) * 100);
   const solved = covered === total && state.regions.every((region) => validateRegion(region).valid);
+  if (solved && !state.solvedAt) {
+    state.solvedAt = Date.now();
+    scheduleSave();
+    submitScoreIfEligible();
+  }
 
   metaSize.textContent = `${state.size} x ${state.size}`;
   metaSeed.textContent = state.seed;
   metaCovered.textContent = `${percent}%`;
-  statusLine.textContent = solved ? "Готово: уровень решен" : "Выдели все прямоугольники";
+  metaTime.textContent = formatElapsed(elapsedMs());
+  metaMode.textContent = isGuest ? "Гость" : currentUser?.name || "Аккаунт";
+  logoutButton.textContent = isGuest ? "Войти" : "Выйти";
+  statusLine.textContent = solved ? solvedStatusText() : "Выдели все прямоугольники";
   statusLine.style.color = solved ? "var(--good)" : "var(--muted)";
   undoButton.disabled = state.history.length === 0;
 }
@@ -325,7 +372,11 @@ function normalizeState(saved) {
     clues: saved.clues || [],
     solution: saved.solution || null,
     regions: saved.regions || [],
-    history: saved.history || []
+    history: saved.history || [],
+    startedAt: saved.startedAt || Date.now(),
+    solvedAt: saved.solvedAt || null,
+    usedSolution: Boolean(saved.usedSolution),
+    scoreSubmitted: Boolean(saved.scoreSubmitted)
   };
 }
 
@@ -474,7 +525,92 @@ function scheduleSave() {
 }
 
 async function saveState() {
+  if (isGuest) {
+    localStorage.setItem(guestStorageKey, JSON.stringify(state));
+    return;
+  }
   await api("/api/state", { method: "PUT", body: { state } });
+}
+
+function loadGuestState() {
+  try {
+    const raw = localStorage.getItem(guestStorageKey);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function startClock() {
+  stopClock();
+  clockTimer = setInterval(() => {
+    if (!state) return;
+    metaTime.textContent = formatElapsed(elapsedMs());
+  }, 1000);
+}
+
+function stopClock() {
+  if (clockTimer) clearInterval(clockTimer);
+  clockTimer = null;
+}
+
+function elapsedMs() {
+  if (!state) return 0;
+  return Math.max(0, (state.solvedAt || Date.now()) - state.startedAt);
+}
+
+function formatElapsed(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function solvedStatusText() {
+  if (state.usedSolution) return "Решение показано: результат не засчитан";
+  if (isGuest) return "Готово: войди через Google, чтобы попасть в таблицу";
+  return state.scoreSubmitted ? "Готово: результат засчитан" : "Готово: отправляю результат";
+}
+
+async function submitScoreIfEligible() {
+  if (isGuest || state.usedSolution || state.scoreSubmitted) return;
+  const response = await api("/api/score", {
+    method: "POST",
+    body: {
+      size: state.size,
+      seed: String(state.seed),
+      meanArea: state.tuning.meanArea,
+      areaSpread: state.tuning.areaSpread,
+      elapsedMs: elapsedMs()
+    }
+  });
+  if (response.ok) {
+    state.scoreSubmitted = true;
+    await saveState();
+    await loadLeaderboard();
+    render();
+  }
+}
+
+async function loadLeaderboard() {
+  const data = await api("/api/leaderboard");
+  const scores = data.scores || [];
+  leaderboardList.innerHTML = "";
+  if (scores.length === 0) {
+    const item = document.createElement("li");
+    item.textContent = "Пока пусто";
+    leaderboardList.append(item);
+    return;
+  }
+  for (const score of scores) {
+    const item = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = score.display_name || "Player";
+    const meta = document.createElement("small");
+    meta.textContent = `${score.size}x${score.size}, ${formatElapsed(score.elapsed_ms)}`;
+    item.append(name, meta);
+    leaderboardList.append(item);
+  }
 }
 
 async function api(url, options = {}) {
