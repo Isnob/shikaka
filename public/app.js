@@ -345,6 +345,8 @@ function updateStatus() {
   if (solved && !state.solvedAt) {
     state.solvedAt = Date.now();
     scheduleSave();
+  }
+  if (solved) {
     submitScoreIfEligible();
   }
 
@@ -581,7 +583,10 @@ async function submitScoreIfEligible() {
       seed: String(state.seed),
       meanArea: state.tuning.meanArea,
       areaSpread: state.tuning.areaSpread,
-      elapsedMs: elapsedMs()
+      elapsedMs: elapsedMs(),
+      usedSolution: state.usedSolution,
+      clues: state.clues,
+      regions: state.regions
     }
   });
   if (response.ok) {

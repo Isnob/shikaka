@@ -159,7 +159,7 @@ async function handleLogin(req, res) {
 }
 
 async function handlePostScore(req, res, auth) {
-  const body = await readJson(req, 32_768);
+  const body = await readJson(req, 512_000);
   const size = Number(body.size);
   const meanArea = Number(body.meanArea);
   const areaSpread = Number(body.areaSpread);
@@ -179,6 +179,11 @@ async function handlePostScore(req, res, auth) {
     return;
   }
 
+  if (body.usedSolution || !isSolvedSubmission(size, body.clues, body.regions)) {
+    sendJson(res, 400, { error: "invalid_solution" });
+    return;
+  }
+
   const displayName = auth.user?.name || auth.user?.email || "Player";
   await pool.query(
     `insert into shikaka_scores (user_key, display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at)
@@ -191,6 +196,45 @@ async function handlePostScore(req, res, auth) {
     [auth.stateKey, displayName, size, seed, meanArea, areaSpread, elapsedMs]
   );
   sendJson(res, 200, { ok: true });
+}
+
+function isSolvedSubmission(size, clues, regions) {
+  if (!Array.isArray(clues) || !Array.isArray(regions)) return false;
+  if (clues.length === 0 || regions.length === 0) return false;
+
+  const occupied = new Set();
+  for (const region of regions) {
+    const rect = normalizeRectPayload(region);
+    if (!rect) return false;
+
+    const area = rect.w * rect.h;
+    const matchingClues = clues.filter((clue) => containsPoint(rect, Number(clue.x), Number(clue.y)));
+    if (matchingClues.length !== 1 || Number(matchingClues[0].value) !== area) return false;
+
+    for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+      for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+        if (x < 0 || y < 0 || x >= size || y >= size) return false;
+        const cellKey = `${x}:${y}`;
+        if (occupied.has(cellKey)) return false;
+        occupied.add(cellKey);
+      }
+    }
+  }
+
+  return occupied.size === size * size;
+}
+
+function normalizeRectPayload(rect) {
+  const x = Number(rect?.x);
+  const y = Number(rect?.y);
+  const w = Number(rect?.w);
+  const h = Number(rect?.h);
+  if (![x, y, w, h].every(Number.isInteger) || w <= 0 || h <= 0) return null;
+  return { x, y, w, h };
+}
+
+function containsPoint(rect, x, y) {
+  return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 }
 
 async function handleGetLeaderboard(res) {
