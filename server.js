@@ -413,12 +413,133 @@ function pickGeneratedLevel(size, tuning) {
 
   for (let index = 0; index < attempts; index += 1) {
     const seed = Math.floor(Math.random() * 2 ** 31);
-    const solution = splitRect({ x: 0, y: 0, w: size, h: size }, mulberry32(seed), size, tuning);
+    const rng = mulberry32(seed);
+    const solution = growTiling(size, rng, tuning);
     const score = scoreSolution(solution, tuning);
     if (!best || score < best.score) best = { seed, solution, score };
   }
 
   return best;
+}
+
+function growTiling(size, rng, tuning) {
+  const profile = generatorProfile(size, tuning);
+  const filled = Array.from({ length: size }, () => Array(size).fill(false));
+  const rects = [];
+
+  while (true) {
+    const origin = firstEmptyCell(filled, size);
+    if (!origin) return repairTinyRects(rects);
+
+    const candidates = rectCandidatesFrom(origin.x, origin.y, filled, size, profile);
+    if (candidates.length === 0) {
+      rects.push({ x: origin.x, y: origin.y, w: 1, h: 1 });
+      filled[origin.y][origin.x] = true;
+      continue;
+    }
+
+    const rect = weightedPick(candidates, rng);
+    rects.push(rect);
+    for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+      for (let x = rect.x; x < rect.x + rect.w; x += 1) filled[y][x] = true;
+    }
+  }
+}
+
+function repairTinyRects(rects) {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const tinyIndex = rects.findIndex((rect) => rect.w * rect.h < 3);
+    if (tinyIndex === -1) break;
+
+    const tiny = rects[tinyIndex];
+    const neighborIndex = rects.findIndex((rect, index) => index !== tinyIndex && rectangularUnion(tiny, rect));
+    if (neighborIndex === -1) break;
+
+    const merged = rectangularUnion(tiny, rects[neighborIndex]);
+    rects.splice(Math.max(tinyIndex, neighborIndex), 1);
+    rects.splice(Math.min(tinyIndex, neighborIndex), 1);
+    rects.push(merged);
+    changed = true;
+  }
+  return rects;
+}
+
+function rectangularUnion(a, b) {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  const right = Math.max(a.x + a.w, b.x + b.w);
+  const bottom = Math.max(a.y + a.h, b.y + b.h);
+  const area = (right - x) * (bottom - y);
+  if (area !== a.w * a.h + b.w * b.h) return null;
+  return { x, y, w: right - x, h: bottom - y };
+}
+
+function firstEmptyCell(filled, size) {
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      if (!filled[y][x]) return { x, y };
+    }
+  }
+  return null;
+}
+
+function rectCandidatesFrom(x, y, filled, size, profile) {
+  const candidates = [];
+  let maxWidth = 0;
+  while (x + maxWidth < size && !filled[y][x + maxWidth]) maxWidth += 1;
+
+  for (let w = 1; w <= maxWidth; w += 1) {
+    let h = 0;
+    outer: while (y + h < size) {
+      for (let dx = 0; dx < w; dx += 1) {
+        if (filled[y + h][x + dx]) break outer;
+      }
+      h += 1;
+    }
+
+    for (let height = 1; height <= h; height += 1) {
+      const area = w * height;
+      if (area < profile.minArea && area !== remainingIslandArea(x, y, filled, size)) continue;
+      if (area > profile.maxArea) continue;
+      const aspect = Math.max(w / height, height / w);
+      const weight = areaDistributionWeight(area, profile) * aspectWeight(aspect);
+      if (weight > 0) candidates.push({ x, y, w, h: height, weight });
+    }
+  }
+
+  return candidates;
+}
+
+function remainingIslandArea(x, y, filled, size) {
+  let area = 0;
+  for (let yy = y; yy < size; yy += 1) {
+    for (let xx = x; xx < size; xx += 1) {
+      if (!filled[yy][xx]) area += 1;
+    }
+  }
+  return area;
+}
+
+function areaDistributionWeight(area, profile) {
+  const sigma = Math.max(0.75, profile.targetIqr / 1.349);
+  const distance = (area - profile.targetMedian) / sigma;
+  return Math.exp(-0.5 * distance * distance) * areaShapeWeight(area);
+}
+
+function weightedPick(items, rng) {
+  const total = items.reduce((sum, item) => sum + item.weight, 0);
+  let roll = rng() * total;
+  for (const item of items) {
+    roll -= item.weight;
+    if (roll <= 0) {
+      const { weight, ...rect } = item;
+      return rect;
+    }
+  }
+  const { weight, ...rect } = items.at(-1);
+  return rect;
 }
 
 function scoreSolution(solution, tuning) {
@@ -429,7 +550,9 @@ function scoreSolution(solution, tuning) {
   const iqrError = Math.abs(stats.iqr - profile.targetIqr) / Math.max(1, profile.targetIqr);
   const duplicatePenalty = histogramConcentration(stats.counts, solution.length);
   const duplicateWeight = profile.spreadRatio < 0.2 ? 80 * (profile.spreadRatio / 0.2) : 80;
+  const histogramError = distributionError(stats.counts, stats.areas.length, profile);
   const tinyPenalty = (stats.counts.get(2) || 0) / solution.length;
+  const invalidTinyPenalty = ((stats.counts.get(1) || 0) + (stats.counts.get(2) || 0)) / solution.length;
   const belowTargetShare = stats.areas.filter((area) => area < profile.targetMedian).length / stats.areas.length;
   const aboveTargetShare = stats.areas.filter((area) => area > profile.targetMedian).length / stats.areas.length;
   const skewPenalty = Math.abs(belowTargetShare - aboveTargetShare);
@@ -441,10 +564,12 @@ function scoreSolution(solution, tuning) {
   return (
     medianError * 190 +
     iqrError * spreadWeight +
+    histogramError * 260 +
     skewPenalty * 120 +
     lowAreaPenalty * 180 +
     duplicatePenalty * duplicateWeight +
-    tinyPenalty * 24
+    tinyPenalty * 24 +
+    invalidTinyPenalty * 10000
   );
 }
 
@@ -484,7 +609,7 @@ function generatorProfile(size, tuning) {
 
   return {
     maxArea: Math.max(4, Math.round(targetMedian + targetIqr * 2.8)),
-    minArea: Math.max(2, Math.floor(targetMedian * (0.72 - spreadRatio * 0.2))),
+    minArea: targetMedian < 5 ? 2 : 3,
     targetMedian,
     targetIqr,
     spreadRatio,
@@ -497,8 +622,12 @@ function generatorProfile(size, tuning) {
 function stopProbability(area, profile, rect) {
   const ratio = Math.min(1, Math.max(0, area / profile.maxArea));
   const aspect = Math.max(rect.w / rect.h, rect.h / rect.w);
-  const aspectPenalty = aspect > 2.2 ? 0.05 : 1.0;
-  return Math.max(0.04, Math.min(0.94, (profile.stopBase + profile.stopSlope * ratio) * aspectPenalty));
+  const aspectPenalty = aspect > 4 ? 0.08 : aspect > 3 ? 0.35 : 1.0;
+  const undersizedPenalty =
+    area < profile.targetMedian
+      ? Math.max(0.06, (area / profile.targetMedian) ** 3)
+      : 1;
+  return Math.max(0.02, Math.min(0.94, (profile.stopBase + profile.stopSlope * ratio) * aspectPenalty * undersizedPenalty));
 }
 
 function possibleCuts(length, otherSide, minArea) {
@@ -521,7 +650,7 @@ function pickCut(cuts, length, otherSide, profile, rng) {
     const balance = Math.max(0.2, smallerArea / Math.max(leftArea, rightArea));
     const leftAspect = Math.max(cut / otherSide, otherSide / cut);
     const rightAspect = Math.max((length - cut) / otherSide, otherSide / (length - cut));
-    const shapeBonus = Math.exp(-(leftAspect + rightAspect) * 0.4);
+    const shapeBonus = aspectWeight(leftAspect) * aspectWeight(rightAspect);
 
     return { cut, weight: tinyPenalty * balance * shapeBonus * Math.exp(-targetDistance * profile.edgeBias) };
   });
@@ -541,6 +670,12 @@ function tinyAreaPenalty(area) {
   return 1;
 }
 
+function aspectWeight(aspect) {
+  if (aspect <= 3) return 1;
+  if (aspect <= 4) return 0.28;
+  return 0.035;
+}
+
 function areaStats(solution) {
   const areas = solution.map((rect) => rect.w * rect.h);
   areas.sort((a, b) => a - b);
@@ -552,6 +687,47 @@ function areaStats(solution) {
   const median = quantile(areas, 0.5);
   const q3 = quantile(areas, 0.75);
   return { areas, mean, stdev: Math.sqrt(variance), q1, median, q3, iqr: q3 - q1, counts };
+}
+
+function distributionError(counts, total, profile) {
+  const expected = expectedDistribution(profile);
+  let error = 0;
+  for (const [area, expectedShare] of expected) {
+    const actualShare = (counts.get(area) || 0) / total;
+    error += Math.abs(actualShare - expectedShare);
+  }
+
+  for (const [area, count] of counts) {
+    if (!expected.has(area)) error += count / total;
+  }
+
+  return error;
+}
+
+function expectedDistribution(profile) {
+  const sigma = Math.max(0.75, profile.targetIqr / 1.349);
+  const weights = new Map();
+  let total = 0;
+  for (let area = profile.minArea; area <= profile.maxArea; area += 1) {
+    const distance = (area - profile.targetMedian) / sigma;
+    const weight = Math.exp(-0.5 * distance * distance) * areaShapeWeight(area);
+    weights.set(area, weight);
+    total += weight;
+  }
+  for (const [area, weight] of weights) weights.set(area, weight / total);
+  return weights;
+}
+
+function areaShapeWeight(area) {
+  let bestAspect = area;
+  for (let width = 1; width * width <= area; width += 1) {
+    if (area % width !== 0) continue;
+    const height = area / width;
+    bestAspect = Math.min(bestAspect, Math.max(width / height, height / width));
+  }
+  if (bestAspect <= 3) return 1;
+  if (bestAspect <= 4) return 0.45;
+  return 0.12;
 }
 
 function quantile(sorted, q) {
