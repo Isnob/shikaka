@@ -13,6 +13,9 @@ const HOST = process.env.HOST || "0.0.0.0";
 const PASSWORD = process.env.SHIKAKU_PASSWORD || "change-me";
 const DATABASE_URL = process.env.DATABASE_URL || "postgres://localhost:5432/shikaka";
 const SESSION_SECRET = process.env.SESSION_SECRET || randomBytes(32).toString("hex");
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
 const PUBLIC_DIR = fileURLToPath(new URL("./public", import.meta.url));
 const STATE_KEY = "solo";
 
@@ -32,6 +35,16 @@ await initDatabase();
 
 createServer(async (req, res) => {
   try {
+    if (req.url === "/auth/google/start" && req.method === "GET") {
+      handleGoogleStart(req, res);
+      return;
+    }
+
+    if (req.url?.startsWith("/auth/google/callback") && req.method === "GET") {
+      await handleGoogleCallback(req, res);
+      return;
+    }
+
     if (req.url === "/api/login" && req.method === "POST") {
       await handleLogin(req, res);
       return;
@@ -43,11 +56,17 @@ createServer(async (req, res) => {
     }
 
     if (req.url === "/api/me" && req.method === "GET") {
-      sendJson(res, 200, { authenticated: isAuthenticated(req) });
+      const auth = getAuth(req);
+      sendJson(res, 200, {
+        authenticated: Boolean(auth),
+        googleConfigured: isGoogleConfigured(),
+        user: auth?.user || null
+      });
       return;
     }
 
-    if (!isAuthenticated(req)) {
+    const auth = getAuth(req);
+    if (!auth) {
       if (req.url?.startsWith("/api/")) {
         sendJson(res, 401, { error: "unauthorized" });
         return;
@@ -55,12 +74,12 @@ createServer(async (req, res) => {
     }
 
     if (req.url === "/api/state" && req.method === "GET") {
-      await handleGetState(res);
+      await handleGetState(res, auth);
       return;
     }
 
     if (req.url === "/api/state" && req.method === "PUT") {
-      await handlePutState(req, res);
+      await handlePutState(req, res, auth);
       return;
     }
 
@@ -86,6 +105,15 @@ async function initDatabase() {
       updated_at timestamptz not null default now()
     )
   `);
+  await pool.query(`
+    create table if not exists shikaka_users (
+      google_sub text primary key,
+      email text,
+      name text,
+      picture text,
+      updated_at timestamptz not null default now()
+    )
+  `);
 }
 
 async function handleLogin(req, res) {
@@ -98,9 +126,116 @@ async function handleLogin(req, res) {
   }
 
   const sessionId = randomBytes(32).toString("hex");
-  sessions.set(sessionId, Date.now());
+  sessions.set(sessionId, {
+    stateKey: STATE_KEY,
+    user: { provider: "password", name: "Password user" }
+  });
   res.setHeader("Set-Cookie", cookieHeader("sid", signSession(sessionId)));
   sendJson(res, 200, { ok: true });
+}
+
+function handleGoogleStart(req, res) {
+  if (!isGoogleConfigured()) {
+    sendText(res, 501, "Google login is not configured.");
+    return;
+  }
+
+  const state = randomBytes(24).toString("hex");
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.searchParams.set("client_id", GOOGLE_CLIENT_ID);
+  url.searchParams.set("redirect_uri", googleRedirectUri(req));
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", "openid email profile");
+  url.searchParams.set("state", state);
+  url.searchParams.set("prompt", "select_account");
+
+  res.statusCode = 302;
+  res.setHeader("Set-Cookie", cookieHeader("oauth_state", signSession(state), 600));
+  res.setHeader("Location", url.toString());
+  res.end();
+}
+
+async function handleGoogleCallback(req, res) {
+  if (!isGoogleConfigured()) {
+    sendText(res, 501, "Google login is not configured.");
+    return;
+  }
+
+  const url = new URL(req.url || "/", baseUrl(req));
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  const signedState = parseCookies(req.headers.cookie || "").oauth_state;
+
+  if (!code || !state || !signedState || signedState !== signSession(state)) {
+    sendText(res, 403, "Invalid OAuth state.");
+    return;
+  }
+
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      redirect_uri: googleRedirectUri(req),
+      grant_type: "authorization_code"
+    })
+  });
+
+  if (!tokenResponse.ok) {
+    console.error(await tokenResponse.text());
+    sendText(res, 502, "Google token exchange failed.");
+    return;
+  }
+
+  const token = await tokenResponse.json();
+  const profileResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: { Authorization: `Bearer ${token.access_token}` }
+  });
+
+  if (!profileResponse.ok) {
+    console.error(await profileResponse.text());
+    sendText(res, 502, "Google profile fetch failed.");
+    return;
+  }
+
+  const profile = await profileResponse.json();
+  const googleSub = String(profile.sub || "");
+  if (!googleSub) {
+    sendText(res, 502, "Google profile did not include subject.");
+    return;
+  }
+
+  await pool.query(
+    `insert into shikaka_users (google_sub, email, name, picture, updated_at)
+     values ($1, $2, $3, $4, now())
+     on conflict (google_sub) do update
+     set email = excluded.email,
+         name = excluded.name,
+         picture = excluded.picture,
+         updated_at = now()`,
+    [googleSub, profile.email || null, profile.name || null, profile.picture || null]
+  );
+
+  const sessionId = randomBytes(32).toString("hex");
+  sessions.set(sessionId, {
+    stateKey: `google:${googleSub}`,
+    user: {
+      provider: "google",
+      email: profile.email || null,
+      name: profile.name || profile.email || "Google user",
+      picture: profile.picture || null
+    }
+  });
+
+  res.statusCode = 302;
+  res.setHeader("Set-Cookie", [
+    cookieHeader("sid", signSession(sessionId)),
+    "oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+  ]);
+  res.setHeader("Location", "/");
+  res.end();
 }
 
 function handleLogout(req, res) {
@@ -110,18 +245,18 @@ function handleLogout(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
-async function handleGetState(res) {
-  const result = await pool.query("select payload from shikaka_state where state_key = $1", [STATE_KEY]);
+async function handleGetState(res, auth) {
+  const result = await pool.query("select payload from shikaka_state where state_key = $1", [auth.stateKey]);
   sendJson(res, 200, { state: result.rows[0]?.payload || null });
 }
 
-async function handlePutState(req, res) {
+async function handlePutState(req, res, auth) {
   const body = await readJson(req, 512_000);
   await pool.query(
     `insert into shikaka_state (state_key, payload, updated_at)
      values ($1, $2, now())
      on conflict (state_key) do update set payload = excluded.payload, updated_at = now()`,
-    [STATE_KEY, body.state || null]
+    [auth.stateKey, body.state || null]
   );
   sendJson(res, 200, { ok: true });
 }
@@ -157,8 +292,12 @@ async function serveStatic(req, res) {
 }
 
 function isAuthenticated(req) {
+  return Boolean(getAuth(req));
+}
+
+function getAuth(req) {
   const sessionId = readSignedSession(req);
-  return Boolean(sessionId && sessions.has(sessionId));
+  return sessionId ? sessions.get(sessionId) || null : null;
 }
 
 function readSignedSession(req) {
@@ -195,9 +334,22 @@ function parseCookies(header) {
   );
 }
 
-function cookieHeader(name, value) {
-  const maxAge = 60 * 60 * 24 * 30;
+function cookieHeader(name, value, maxAge = 60 * 60 * 24 * 30) {
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+function isGoogleConfigured() {
+  return Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+}
+
+function googleRedirectUri(req) {
+  return `${baseUrl(req)}/auth/google/callback`;
+}
+
+function baseUrl(req) {
+  if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL.replace(/\/$/, "");
+  const proto = req.headers["x-forwarded-proto"] || "http";
+  return `${proto}://${req.headers.host}`;
 }
 
 async function readJson(req, maxBytes = 16_384) {

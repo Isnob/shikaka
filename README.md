@@ -66,6 +66,30 @@ graph LR
 
 Open `http://localhost:3000`. If `SHIKAKU_PASSWORD` is not configured, the default development password is `change-me`.
 
+### Google Login
+
+Google OAuth is enabled when these variables are present:
+
+```bash
+PUBLIC_BASE_URL='http://localhost:3000'
+GOOGLE_CLIENT_ID='...apps.googleusercontent.com'
+GOOGLE_CLIENT_SECRET='...'
+```
+
+Configure the OAuth client in Google Cloud Console with this redirect URI:
+
+```text
+http://localhost:3000/auth/google/callback
+```
+
+For production, set `PUBLIC_BASE_URL` to the public origin and use the matching callback:
+
+```text
+https://your-domain.example/auth/google/callback
+```
+
+Each Google account gets its own saved progress. The password login remains available as a fallback and uses the shared `solo` progress slot.
+
 ## Deployment
 
 Shikaka runs perfectly on a standard VPS without needing complex orchestrators or containers. Set the environment variables and run it directly:
@@ -75,5 +99,8 @@ PORT=3000 \
 SHIKAKU_PASSWORD='your-strong-password' \
 SESSION_SECRET='long-random-string' \
 DATABASE_URL='postgres://user:password@localhost:5432/shikaka' \
+PUBLIC_BASE_URL='https://your-domain.example' \
+GOOGLE_CLIENT_ID='...apps.googleusercontent.com' \
+GOOGLE_CLIENT_SECRET='...' \
 npm start
 ```

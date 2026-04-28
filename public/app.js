@@ -2,6 +2,7 @@ const login = document.querySelector("#login");
 const game = document.querySelector("#game");
 const loginForm = document.querySelector("#loginForm");
 const loginError = document.querySelector("#loginError");
+const googleLogin = document.querySelector("#googleLogin");
 const board = document.querySelector("#board");
 const statusLine = document.querySelector("#status");
 const sizeSelect = document.querySelector("#size");
@@ -86,6 +87,7 @@ logoutButton.addEventListener("click", async () => {
 
 async function boot() {
   const me = await api("/api/me");
+  googleLogin.classList.toggle("hidden", !me.googleConfigured);
   if (me.authenticated) {
     await loadGame();
   } else {

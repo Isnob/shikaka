@@ -104,6 +104,22 @@ input {
   width: 100%;
 }
 
+.googleLogin {
+  min-height: 40px;
+  margin-top: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  text-decoration: none;
+}
+
+.googleLogin:hover {
+  border-color: var(--accent);
+}
+
 .error {
   min-height: 22px;
   color: var(--bad);
