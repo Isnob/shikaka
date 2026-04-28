@@ -53,8 +53,8 @@ guestLogin.addEventListener("click", async () => {
   await loadGame({ guest: true });
 });
 
-newGameButton.addEventListener("click", () => {
-  startNewGame(Number(sizeSelect.value), readTuning());
+newGameButton.addEventListener("click", async () => {
+  await startNewGame(Number(sizeSelect.value), readTuning());
 });
 
 meanAreaSlider.addEventListener("input", () => {
@@ -72,7 +72,24 @@ clearButton.addEventListener("click", () => {
   scheduleSave();
 });
 
-solveButton.addEventListener("click", () => {
+solveButton.addEventListener("click", async () => {
+  if (!state.solution) {
+    const data = await api("/api/solution", {
+      method: "POST",
+      body: {
+        size: state.size,
+        seed: String(state.seed),
+        meanArea: state.tuning.meanArea,
+        areaSpread: state.tuning.areaSpread
+      }
+    });
+    state.solution = data.solution || null;
+    if (data.error === "unauthorized") {
+      alert("Решение доступно после входа.");
+      return;
+    }
+  }
+
   if (!state.solution) {
     alert("Для этого уровня решение не сохранено (старая версия игры). Попробуй новый уровень.");
     return;
@@ -120,13 +137,13 @@ async function loadGame({ guest = false } = {}) {
 
   if (isGuest) {
     const saved = loadGuestState();
-    state = saved ? normalizeState(saved) : makeGame(8, { meanArea: 50, areaSpread: 50 });
+    state = saved ? normalizeState(saved) : await makeGame(8, { meanArea: 50, areaSpread: 50 });
   } else {
     const saved = await api("/api/state");
     if (saved.state) {
       state = normalizeState(saved.state);
     } else {
-      state = makeGame(8, { meanArea: 50, areaSpread: 50 });
+      state = await makeGame(8, { meanArea: 50, areaSpread: 50 });
       await saveState();
     }
   }
@@ -139,28 +156,30 @@ async function loadGame({ guest = false } = {}) {
   render();
 }
 
-function startNewGame(size, tuning) {
-  state = makeGame(size, tuning);
+async function startNewGame(size, tuning) {
+  newGameButton.disabled = true;
+  try {
+    state = await makeGame(size, tuning);
+  } finally {
+    newGameButton.disabled = false;
+  }
   render();
   scheduleSave();
 }
 
-function makeGame(size, tuning) {
-  const candidate = pickGeneratedLevel(size, tuning);
-  const seed = candidate.seed;
-  const rng = mulberry32(seed);
-  const solution = candidate.solution;
-  const clues = solution.map((rect) => ({
-    x: rect.x + Math.floor(rng() * rect.w),
-    y: rect.y + Math.floor(rng() * rect.h),
-    value: rect.w * rect.h
-  }));
+async function makeGame(size, tuning) {
+  const data = await api("/api/level", {
+    method: "POST",
+    body: { size, meanArea: tuning.meanArea, areaSpread: tuning.areaSpread }
+  });
+  if (!data.level) throw new Error("Level generation failed");
+  const level = data.level;
   return {
-    size,
-    tuning,
-    seed,
-    clues,
-    solution,
+    size: level.size,
+    tuning: level.tuning,
+    seed: level.seed,
+    clues: level.clues,
+    solution: null,
     regions: [],
     history: [],
     startedAt: Date.now(),

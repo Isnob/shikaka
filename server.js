@@ -70,6 +70,16 @@ createServer(async (req, res) => {
       return;
     }
 
+    if (req.url === "/api/level" && req.method === "POST") {
+      await handleCreateLevel(req, res);
+      return;
+    }
+
+    if (req.url === "/api/solution" && req.method === "POST") {
+      await handleGetSolution(req, res);
+      return;
+    }
+
     const auth = getAuth(req);
     if (!auth) {
       if (req.url?.startsWith("/api/")) {
@@ -138,6 +148,29 @@ async function initDatabase() {
       unique (user_key, size, seed)
     )
   `);
+  await pool.query(`
+    create table if not exists shikaka_levels (
+      id bigserial primary key,
+      size integer not null,
+      seed text not null,
+      mean_area integer not null,
+      area_spread integer not null,
+      payload jsonb not null,
+      created_at timestamptz not null default now(),
+      unique (size, seed, mean_area, area_spread)
+    )
+  `);
+  await pool.query(`
+    create table if not exists shikaka_reveals (
+      user_key text not null,
+      size integer not null,
+      seed text not null,
+      mean_area integer not null,
+      area_spread integer not null,
+      revealed_at timestamptz not null default now(),
+      primary key (user_key, size, seed, mean_area, area_spread)
+    )
+  `);
 }
 
 async function handleLogin(req, res) {
@@ -179,7 +212,18 @@ async function handlePostScore(req, res, auth) {
     return;
   }
 
-  if (body.usedSolution || !isSolvedSubmission(size, body.clues, body.regions)) {
+  const level = await findLevel(size, seed, meanArea, areaSpread);
+  if (!level) {
+    sendJson(res, 400, { error: "unknown_level" });
+    return;
+  }
+
+  if (body.usedSolution || (await hasReveal(auth.stateKey, size, seed, meanArea, areaSpread))) {
+    sendJson(res, 400, { error: "solution_revealed" });
+    return;
+  }
+
+  if (!isSolvedSubmission(size, level.clues, body.regions)) {
     sendJson(res, 400, { error: "invalid_solution" });
     return;
   }
@@ -196,6 +240,98 @@ async function handlePostScore(req, res, auth) {
     [auth.stateKey, displayName, size, seed, meanArea, areaSpread, elapsedMs]
   );
   sendJson(res, 200, { ok: true });
+}
+
+async function handleCreateLevel(req, res) {
+  const body = await readJson(req, 16_384);
+  const size = Number(body.size);
+  const tuning = {
+    meanArea: Number(body.meanArea),
+    areaSpread: Number(body.areaSpread)
+  };
+
+  if (
+    ![6, 8, 10, 20, 26].includes(size) ||
+    !Number.isInteger(tuning.meanArea) ||
+    !Number.isInteger(tuning.areaSpread) ||
+    tuning.meanArea < 0 ||
+    tuning.meanArea > 100 ||
+    tuning.areaSpread < 0 ||
+    tuning.areaSpread > 100
+  ) {
+    sendJson(res, 400, { error: "bad_level_request" });
+    return;
+  }
+
+  const level = makeGame(size, tuning);
+  await pool.query(
+    `insert into shikaka_levels (size, seed, mean_area, area_spread, payload, created_at)
+     values ($1, $2, $3, $4, $5, now())
+     on conflict (size, seed, mean_area, area_spread) do nothing`,
+    [size, String(level.seed), tuning.meanArea, tuning.areaSpread, level]
+  );
+  sendJson(res, 200, { level: publicLevel(level) });
+}
+
+async function handleGetSolution(req, res) {
+  const auth = getAuth(req);
+  if (!auth) {
+    sendJson(res, 401, { error: "unauthorized" });
+    return;
+  }
+
+  const body = await readJson(req, 16_384);
+  const size = Number(body.size);
+  const meanArea = Number(body.meanArea);
+  const areaSpread = Number(body.areaSpread);
+  const seed = String(body.seed || "");
+  const level = await findLevel(size, seed, meanArea, areaSpread);
+
+  if (!level) {
+    sendJson(res, 404, { error: "unknown_level" });
+    return;
+  }
+
+  await pool.query(
+    `insert into shikaka_reveals (user_key, size, seed, mean_area, area_spread, revealed_at)
+     values ($1, $2, $3, $4, $5, now())
+     on conflict (user_key, size, seed, mean_area, area_spread)
+     do update set revealed_at = excluded.revealed_at`,
+    [auth.stateKey, size, seed, meanArea, areaSpread]
+  );
+
+  sendJson(res, 200, { solution: level.solution });
+}
+
+async function findLevel(size, seed, meanArea, areaSpread) {
+  const result = await pool.query(
+    `select payload
+     from shikaka_levels
+     where size = $1 and seed = $2 and mean_area = $3 and area_spread = $4
+     limit 1`,
+    [size, seed, meanArea, areaSpread]
+  );
+  return result.rows[0]?.payload || null;
+}
+
+async function hasReveal(userKey, size, seed, meanArea, areaSpread) {
+  const result = await pool.query(
+    `select 1
+     from shikaka_reveals
+     where user_key = $1 and size = $2 and seed = $3 and mean_area = $4 and area_spread = $5
+     limit 1`,
+    [userKey, size, seed, meanArea, areaSpread]
+  );
+  return result.rowCount > 0;
+}
+
+function publicLevel(level) {
+  return {
+    size: level.size,
+    tuning: level.tuning,
+    seed: level.seed,
+    clues: level.clues
+  };
 }
 
 function isSolvedSubmission(size, clues, regions) {
@@ -235,6 +371,165 @@ function normalizeRectPayload(rect) {
 
 function containsPoint(rect, x, y) {
   return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+}
+
+function makeGame(size, tuning) {
+  const candidate = pickGeneratedLevel(size, tuning);
+  const seed = candidate.seed;
+  const rng = mulberry32(seed);
+  const solution = candidate.solution;
+  const clues = solution.map((rect) => ({
+    x: rect.x + Math.floor(rng() * rect.w),
+    y: rect.y + Math.floor(rng() * rect.h),
+    value: rect.w * rect.h
+  }));
+  return { size, tuning, seed, clues, solution };
+}
+
+function pickGeneratedLevel(size, tuning) {
+  const attempts = 36;
+  let best = null;
+
+  for (let index = 0; index < attempts; index += 1) {
+    const seed = Math.floor(Math.random() * 2 ** 31);
+    const solution = splitRect({ x: 0, y: 0, w: size, h: size }, mulberry32(seed), size, tuning);
+    const score = scoreSolution(solution, tuning);
+    if (!best || score < best.score) best = { seed, solution, score };
+  }
+
+  return best;
+}
+
+function scoreSolution(solution, tuning) {
+  const size = Math.sqrt(solution.reduce((sum, rect) => sum + rect.w * rect.h, 0));
+  const profile = generatorProfile(size, tuning);
+  const stats = areaStats(solution);
+  const meanError = Math.abs(stats.mean - profile.targetMean) / profile.targetMean;
+  const spreadError = Math.abs(stats.stdev - profile.targetStdev) / Math.max(1, profile.targetStdev);
+  const duplicatePenalty = histogramConcentration(stats.counts, solution.length);
+  const tinyPenalty = (stats.counts.get(2) || 0) / solution.length;
+
+  return meanError * 90 + spreadError * 55 + duplicatePenalty * 80 + tinyPenalty * 24;
+}
+
+function splitRect(rect, rng, size, tuning) {
+  const profile = generatorProfile(size, tuning);
+  const area = rect.w * rect.h;
+  const verticalCuts = possibleCuts(rect.w, rect.h, profile.minArea);
+  const horizontalCuts = possibleCuts(rect.h, rect.w, profile.minArea);
+  const canVertical = verticalCuts.length > 0;
+  const canHorizontal = horizontalCuts.length > 0;
+  const stopChance = stopProbability(area, profile, rect);
+
+  if (area <= profile.maxArea && area >= profile.minArea && rng() < stopChance) return [rect];
+  if (!canVertical && !canHorizontal) return [rect];
+
+  const splitVertical = canVertical && (!canHorizontal || rng() < rect.w / (rect.w + rect.h));
+  if (splitVertical) {
+    const cut = pickCut(verticalCuts, rect.w, rect.h, profile, rng);
+    return [
+      ...splitRect({ x: rect.x, y: rect.y, w: cut, h: rect.h }, rng, size, tuning),
+      ...splitRect({ x: rect.x + cut, y: rect.y, w: rect.w - cut, h: rect.h }, rng, size, tuning)
+    ];
+  }
+
+  const cut = pickCut(horizontalCuts, rect.h, rect.w, profile, rng);
+  return [
+    ...splitRect({ x: rect.x, y: rect.y, w: rect.w, h: cut }, rng, size, tuning),
+    ...splitRect({ x: rect.x, y: rect.y + cut, w: rect.w, h: rect.h - cut }, rng, size, tuning)
+  ];
+}
+
+function generatorProfile(size, tuning) {
+  const baseMaxArea = size <= 6 ? 8 : size <= 8 ? 12 : size <= 10 ? 16 : size <= 20 ? 28 : 36;
+  const meanRatio = tuning.meanArea / 100;
+  const spreadRatio = tuning.areaSpread / 100;
+  const targetMean = 3 + baseMaxArea * (0.22 + meanRatio * 1.75);
+  const targetStdev = 1.2 + targetMean * (0.12 + spreadRatio * 0.95);
+
+  return {
+    maxArea: Math.max(4, Math.round(targetMean + targetStdev * 2.3)),
+    minArea: targetMean < 5 ? 2 : 3,
+    targetMean,
+    targetStdev,
+    stopBase: Math.max(0.08, Math.min(0.82, 0.18 + meanRatio * 0.48)),
+    stopSlope: Math.max(0.12, 0.62 - meanRatio * 0.24),
+    edgeBias: 0.85 + (1 - spreadRatio) * 1.35
+  };
+}
+
+function stopProbability(area, profile, rect) {
+  const ratio = Math.min(1, Math.max(0, area / profile.maxArea));
+  const aspect = Math.max(rect.w / rect.h, rect.h / rect.w);
+  const aspectPenalty = aspect > 2.2 ? 0.05 : 1.0;
+  return Math.max(0.04, Math.min(0.94, (profile.stopBase + profile.stopSlope * ratio) * aspectPenalty));
+}
+
+function possibleCuts(length, otherSide, minArea) {
+  const cuts = [];
+  for (let cut = 1; cut < length; cut += 1) {
+    if (cut * otherSide >= minArea && (length - cut) * otherSide >= minArea) {
+      cuts.push(cut);
+    }
+  }
+  return cuts;
+}
+
+function pickCut(cuts, length, otherSide, profile, rng) {
+  const weighted = cuts.map((cut) => {
+    const leftArea = cut * otherSide;
+    const rightArea = (length - cut) * otherSide;
+    const smallerArea = Math.min(leftArea, rightArea);
+    const targetDistance = Math.abs(smallerArea - profile.targetMean) / profile.targetStdev;
+    const tinyPenalty = tinyAreaPenalty(leftArea) * tinyAreaPenalty(rightArea);
+    const balance = Math.max(0.2, smallerArea / Math.max(leftArea, rightArea));
+    const leftAspect = Math.max(cut / otherSide, otherSide / cut);
+    const rightAspect = Math.max((length - cut) / otherSide, otherSide / (length - cut));
+    const shapeBonus = Math.exp(-(leftAspect + rightAspect) * 0.4);
+
+    return { cut, weight: tinyPenalty * balance * shapeBonus * Math.exp(-targetDistance * profile.edgeBias) };
+  });
+  const total = weighted.reduce((sum, item) => sum + item.weight, 0);
+  let roll = rng() * total;
+  for (const item of weighted) {
+    roll -= item.weight;
+    if (roll <= 0) return item.cut;
+  }
+  return weighted.at(-1).cut;
+}
+
+function tinyAreaPenalty(area) {
+  if (area === 2) return 0.03;
+  if (area === 3) return 0.18;
+  if (area === 4) return 0.45;
+  return 1;
+}
+
+function areaStats(solution) {
+  const areas = solution.map((rect) => rect.w * rect.h);
+  const mean = areas.reduce((sum, area) => sum + area, 0) / areas.length;
+  const variance = areas.reduce((sum, area) => sum + (area - mean) ** 2, 0) / areas.length;
+  const counts = new Map();
+  for (const area of areas) counts.set(area, (counts.get(area) || 0) + 1);
+  return { mean, stdev: Math.sqrt(variance), counts };
+}
+
+function histogramConcentration(counts, total) {
+  let sum = 0;
+  for (const count of counts.values()) {
+    const share = count / total;
+    sum += share * share;
+  }
+  return sum;
+}
+
+function mulberry32(seed) {
+  return function next() {
+    let value = (seed += 0x6d2b79f5);
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 async function handleGetLeaderboard(res) {
