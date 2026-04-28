@@ -26,6 +26,8 @@ const leaderboardList = document.querySelector("#leaderboard");
 
 const palette = ["#f7c6bd", "#f2d377", "#9fd8cb", "#a8c8f2", "#d7b6e8", "#b8d98b", "#f4b06a", "#b7c4d8"];
 const guestStorageKey = "shikaka:guest-state";
+const tuningMax = 30;
+const defaultTuning = { meanArea: 15, areaSpread: 15 };
 
 let state = null;
 let currentUser = null;
@@ -37,6 +39,7 @@ let lastTap = null;
 let clockTimer = null;
 let boardZoom = 1;
 let boardGesture = null;
+const boardPointers = new Map();
 
 boot();
 
@@ -74,10 +77,9 @@ for (const slider of [meanAreaSlider, areaSpreadSlider]) {
   });
 }
 
-boardWrap.addEventListener("touchstart", onBoardTouchStart, { passive: false });
-boardWrap.addEventListener("touchmove", onBoardTouchMove, { passive: false });
-boardWrap.addEventListener("touchend", onBoardTouchEnd);
-boardWrap.addEventListener("touchcancel", onBoardTouchEnd);
+board.addEventListener("pointermove", onBoardPointerMove);
+board.addEventListener("pointerup", onBoardPointerEnd);
+board.addEventListener("pointercancel", onBoardPointerEnd);
 
 clearButton.addEventListener("click", () => {
   pushHistory();
@@ -151,13 +153,13 @@ async function loadGame({ guest = false } = {}) {
 
   if (isGuest) {
     const saved = loadGuestState();
-    state = saved ? normalizeState(saved) : await makeGame(8, { meanArea: 50, areaSpread: 50 });
+    state = saved ? normalizeState(saved) : await makeGame(8, defaultTuning);
   } else {
     const saved = await api("/api/state");
     if (saved.state) {
       state = normalizeState(saved.state);
     } else {
-      state = await makeGame(8, { meanArea: 50, areaSpread: 50 });
+      state = await makeGame(8, defaultTuning);
       await saveState();
     }
   }
@@ -303,6 +305,12 @@ function render() {
 }
 
 function onPointerDown(event) {
+  board.setPointerCapture(event.pointerId);
+  boardPointers.set(event.pointerId, pointerPoint(event));
+  if (boardPointers.size >= 2) {
+    startBoardGesture();
+    return;
+  }
   if (boardGesture) return;
   const point = pointFromCell(event.currentTarget);
   if (isDoubleTap(point)) {
@@ -313,7 +321,6 @@ function onPointerDown(event) {
   lastTap = { ...point, time: Date.now() };
   dragStart = point;
   dragEnd = point;
-  board.setPointerCapture(event.pointerId);
   board.addEventListener("pointermove", onPointerMove);
   board.addEventListener("pointerup", onPointerUp, { once: true });
   render();
@@ -365,26 +372,17 @@ function onPointerUp() {
   render();
 }
 
-function onBoardTouchStart(event) {
-  if (event.touches.length < 2) return;
-  event.preventDefault();
-  dragStart = null;
-  dragEnd = null;
-  render();
-  boardGesture = {
-    distance: touchDistance(event.touches),
-    midpoint: touchMidpoint(event.touches),
-    zoom: boardZoom,
-    scrollLeft: boardWrap.scrollLeft,
-    scrollTop: boardWrap.scrollTop
-  };
-}
+function onBoardPointerMove(event) {
+  if (!boardPointers.has(event.pointerId)) return;
+  boardPointers.set(event.pointerId, pointerPoint(event));
+  if (!boardGesture && boardPointers.size >= 2) startBoardGesture();
+  if (!boardGesture) return;
 
-function onBoardTouchMove(event) {
-  if (!boardGesture || event.touches.length < 2) return;
+  const pointers = activeBoardPointers();
+  if (pointers.length < 2) return;
   event.preventDefault();
-  const distance = touchDistance(event.touches);
-  const midpoint = touchMidpoint(event.touches);
+  const distance = pointerDistance(pointers);
+  const midpoint = pointerMidpoint(pointers);
   const nextZoom = clamp(boardGesture.zoom * (distance / boardGesture.distance), 0.55, 2.2);
   const zoomRatio = nextZoom / boardZoom;
   boardZoom = nextZoom;
@@ -393,25 +391,49 @@ function onBoardTouchMove(event) {
   boardWrap.scrollTop = boardGesture.scrollTop * zoomRatio - (midpoint.y - boardGesture.midpoint.y);
 }
 
-function onBoardTouchEnd(event) {
-  if (event.touches.length >= 2) return;
-  boardGesture = null;
+function onBoardPointerEnd(event) {
+  boardPointers.delete(event.pointerId);
+  if (boardPointers.size < 2) boardGesture = null;
 }
 
 function applyBoardZoom() {
   board.style.zoom = String(boardZoom);
 }
 
-function touchDistance(touches) {
-  const [first, second] = touches;
-  return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+function startBoardGesture() {
+  const pointers = activeBoardPointers();
+  if (pointers.length < 2) return;
+  dragStart = null;
+  dragEnd = null;
+  board.removeEventListener("pointermove", onPointerMove);
+  render();
+  boardGesture = {
+    distance: pointerDistance(pointers),
+    midpoint: pointerMidpoint(pointers),
+    zoom: boardZoom,
+    scrollLeft: boardWrap.scrollLeft,
+    scrollTop: boardWrap.scrollTop
+  };
 }
 
-function touchMidpoint(touches) {
-  const [first, second] = touches;
+function activeBoardPointers() {
+  return [...boardPointers.values()];
+}
+
+function pointerPoint(event) {
+  return { x: event.clientX, y: event.clientY };
+}
+
+function pointerDistance(pointers) {
+  const [first, second] = pointers;
+  return Math.hypot(first.x - second.x, first.y - second.y);
+}
+
+function pointerMidpoint(pointers) {
+  const [first, second] = pointers;
   return {
-    x: (first.clientX + second.clientX) / 2,
-    y: (first.clientY + second.clientY) / 2
+    x: (first.x + second.x) / 2,
+    y: (first.y + second.y) / 2
   };
 }
 
@@ -454,13 +476,13 @@ function updateStatus() {
 
 function normalizeState(saved) {
   const tuning = saved.tuning || {
-    meanArea: saved.difficulty ?? 50,
-    areaSpread: 50
+    meanArea: saved.difficulty ?? defaultTuning.meanArea,
+    areaSpread: defaultTuning.areaSpread
   };
 
   return {
     size: saved.size,
-    tuning,
+    tuning: normalizeTuning(tuning),
     seed: saved.seed,
     clues: saved.clues || [],
     solution: saved.solution || null,
@@ -491,8 +513,8 @@ function updateTuningLabels() {
 
 function generatorProfile(size, tuning) {
   const baseMaxArea = size <= 6 ? 8 : size <= 8 ? 12 : size <= 10 ? 16 : size <= 20 ? 28 : 36;
-  const meanRatio = tuning.meanArea / 100;
-  const spreadRatio = tuning.areaSpread / 100;
+  const meanRatio = tuning.meanArea / tuningMax;
+  const spreadRatio = tuning.areaSpread / tuningMax;
   const targetMean = 3 + baseMaxArea * (0.22 + meanRatio * 1.75);
   const targetStdev = 1.2 + targetMean * (0.12 + spreadRatio * 0.95);
 
@@ -505,6 +527,20 @@ function generatorProfile(size, tuning) {
     stopSlope: Math.max(0.12, 0.62 - meanRatio * 0.24),
     edgeBias: 0.85 + (1 - spreadRatio) * 1.35
   };
+}
+
+function normalizeTuning(tuning) {
+  return {
+    meanArea: normalizeTuningValue(tuning.meanArea, defaultTuning.meanArea),
+    areaSpread: normalizeTuningValue(tuning.areaSpread, defaultTuning.areaSpread)
+  };
+}
+
+function normalizeTuningValue(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  const migrated = number > tuningMax ? Math.round((number / 100) * tuningMax) : number;
+  return Math.max(0, Math.min(tuningMax, Math.round(migrated)));
 }
 
 function stopProbability(area, profile, rect) {

@@ -417,11 +417,23 @@ input {
 
   .controls {
     justify-content: flex-start;
+    gap: 6px;
   }
 
   .tuning {
-    grid-template-columns: 1fr;
-    width: min(100%, 300px);
+    min-height: 38px;
+    grid-template-columns: 64px 150px 32px;
+    width: min(100%, 270px);
+    padding: 0 8px;
+    gap: 6px;
+  }
+
+  .tuning input[type="range"] {
+    width: 150px;
+  }
+
+  .tuning output {
+    text-align: right;
   }
 
   .workspace {

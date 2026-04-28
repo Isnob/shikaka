@@ -18,6 +18,7 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
 const PUBLIC_DIR = fileURLToPath(new URL("./public", import.meta.url));
 const STATE_KEY = "solo";
+const TUNING_MAX = 30;
 
 const sessions = new Map();
 const pool = new Pool({ connectionString: DATABASE_URL });
@@ -255,9 +256,9 @@ async function handleCreateLevel(req, res) {
     !Number.isInteger(tuning.meanArea) ||
     !Number.isInteger(tuning.areaSpread) ||
     tuning.meanArea < 0 ||
-    tuning.meanArea > 100 ||
+    tuning.meanArea > TUNING_MAX ||
     tuning.areaSpread < 0 ||
-    tuning.areaSpread > 100
+    tuning.areaSpread > TUNING_MAX
   ) {
     sendJson(res, 400, { error: "bad_level_request" });
     return;
@@ -442,8 +443,8 @@ function splitRect(rect, rng, size, tuning) {
 
 function generatorProfile(size, tuning) {
   const baseMaxArea = size <= 6 ? 8 : size <= 8 ? 12 : size <= 10 ? 16 : size <= 20 ? 28 : 36;
-  const meanRatio = tuning.meanArea / 100;
-  const spreadRatio = tuning.areaSpread / 100;
+  const meanRatio = tuning.meanArea / TUNING_MAX;
+  const spreadRatio = tuning.areaSpread / TUNING_MAX;
   const targetMean = 3 + baseMaxArea * (0.22 + meanRatio * 1.75);
   const targetStdev = 1.2 + targetMean * (0.12 + spreadRatio * 0.95);
 
