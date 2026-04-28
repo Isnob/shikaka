@@ -245,10 +245,13 @@ input {
 
 .boardWrap {
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 12px;
   background: #ded7c9;
   border: 1px solid var(--line);
   border-radius: 8px;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .board {
@@ -395,6 +398,10 @@ input {
     --board-cell: min(12vw, 52px);
   }
 
+  .game {
+    padding: 22px 14px;
+  }
+
   .board[data-size="20"] {
     --board-cell: 32px;
   }
@@ -419,5 +426,11 @@ input {
 
   .workspace {
     grid-template-columns: 1fr;
+  }
+
+  .boardWrap {
+    max-height: min(68vh, 620px);
+    max-width: calc(100vw - 28px);
+    scrollbar-width: thin;
   }
 }

@@ -5,6 +5,7 @@ const loginError = document.querySelector("#loginError");
 const googleLogin = document.querySelector("#googleLogin");
 const guestLogin = document.querySelector("#guestLogin");
 const board = document.querySelector("#board");
+const boardWrap = document.querySelector(".boardWrap");
 const statusLine = document.querySelector("#status");
 const sizeSelect = document.querySelector("#size");
 const meanAreaSlider = document.querySelector("#meanArea");
@@ -34,6 +35,8 @@ let dragEnd = null;
 let saveTimer = null;
 let lastTap = null;
 let clockTimer = null;
+let boardZoom = 1;
+let boardGesture = null;
 
 boot();
 
@@ -70,6 +73,11 @@ for (const slider of [meanAreaSlider, areaSpreadSlider]) {
     event.stopPropagation();
   });
 }
+
+boardWrap.addEventListener("touchstart", onBoardTouchStart, { passive: false });
+boardWrap.addEventListener("touchmove", onBoardTouchMove, { passive: false });
+boardWrap.addEventListener("touchend", onBoardTouchEnd);
+boardWrap.addEventListener("touchcancel", onBoardTouchEnd);
 
 clearButton.addEventListener("click", () => {
   pushHistory();
@@ -253,6 +261,7 @@ function render() {
   board.innerHTML = "";
   board.dataset.size = String(state.size);
   board.style.gridTemplateColumns = `repeat(${state.size}, var(--board-cell))`;
+  applyBoardZoom();
   const assignments = buildAssignments();
   const preview = dragStart && dragEnd ? normalizeRect(dragStart, dragEnd) : null;
   const previewValid = preview ? validateRegion(preview).valid : true;
@@ -294,6 +303,7 @@ function render() {
 }
 
 function onPointerDown(event) {
+  if (boardGesture) return;
   const point = pointFromCell(event.currentTarget);
   if (isDoubleTap(point)) {
     removeRegionAt(point);
@@ -330,6 +340,7 @@ function removeRegionAt(point) {
 }
 
 function onPointerMove(event) {
+  if (boardGesture) return;
   if (!dragStart) return;
   const cell = document.elementFromPoint(event.clientX, event.clientY)?.closest(".cell");
   if (!cell || !board.contains(cell)) return;
@@ -339,6 +350,7 @@ function onPointerMove(event) {
 
 function onPointerUp() {
   board.removeEventListener("pointermove", onPointerMove);
+  if (boardGesture) return;
   if (!dragStart || !dragEnd) return;
   const rect = normalizeRect(dragStart, dragEnd);
   const result = validateRegion(rect);
@@ -351,6 +363,60 @@ function onPointerUp() {
   dragStart = null;
   dragEnd = null;
   render();
+}
+
+function onBoardTouchStart(event) {
+  if (event.touches.length < 2) return;
+  event.preventDefault();
+  dragStart = null;
+  dragEnd = null;
+  render();
+  boardGesture = {
+    distance: touchDistance(event.touches),
+    midpoint: touchMidpoint(event.touches),
+    zoom: boardZoom,
+    scrollLeft: boardWrap.scrollLeft,
+    scrollTop: boardWrap.scrollTop
+  };
+}
+
+function onBoardTouchMove(event) {
+  if (!boardGesture || event.touches.length < 2) return;
+  event.preventDefault();
+  const distance = touchDistance(event.touches);
+  const midpoint = touchMidpoint(event.touches);
+  const nextZoom = clamp(boardGesture.zoom * (distance / boardGesture.distance), 0.55, 2.2);
+  const zoomRatio = nextZoom / boardZoom;
+  boardZoom = nextZoom;
+  applyBoardZoom();
+  boardWrap.scrollLeft = boardGesture.scrollLeft * zoomRatio - (midpoint.x - boardGesture.midpoint.x);
+  boardWrap.scrollTop = boardGesture.scrollTop * zoomRatio - (midpoint.y - boardGesture.midpoint.y);
+}
+
+function onBoardTouchEnd(event) {
+  if (event.touches.length >= 2) return;
+  boardGesture = null;
+}
+
+function applyBoardZoom() {
+  board.style.zoom = String(boardZoom);
+}
+
+function touchDistance(touches) {
+  const [first, second] = touches;
+  return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+}
+
+function touchMidpoint(touches) {
+  const [first, second] = touches;
+  return {
+    x: (first.clientX + second.clientX) / 2,
+    y: (first.clientY + second.clientY) / 2
+  };
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function validateRegion(rect) {
