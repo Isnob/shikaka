@@ -408,7 +408,7 @@ function makeGame(size, tuning) {
 }
 
 function pickGeneratedLevel(size, tuning) {
-  const attempts = 36;
+  const attempts = size >= 20 ? 80 : 56;
   let best = null;
 
   for (let index = 0; index < attempts; index += 1) {
@@ -425,14 +425,27 @@ function scoreSolution(solution, tuning) {
   const size = Math.sqrt(solution.reduce((sum, rect) => sum + rect.w * rect.h, 0));
   const profile = generatorProfile(size, tuning);
   const stats = areaStats(solution);
-  const meanError = Math.abs(stats.mean - profile.targetMean) / profile.targetMean;
-  const spreadError = Math.abs(stats.stdev - profile.targetStdev) / Math.max(0.75, profile.targetStdev);
+  const medianError = Math.abs(stats.median - profile.targetMedian) / profile.targetMedian;
+  const iqrError = Math.abs(stats.iqr - profile.targetIqr) / Math.max(1, profile.targetIqr);
   const duplicatePenalty = histogramConcentration(stats.counts, solution.length);
   const duplicateWeight = profile.spreadRatio < 0.2 ? 80 * (profile.spreadRatio / 0.2) : 80;
   const tinyPenalty = (stats.counts.get(2) || 0) / solution.length;
-  const spreadWeight = 55 + (1 - profile.spreadRatio) * 220;
+  const belowTargetShare = stats.areas.filter((area) => area < profile.targetMedian).length / stats.areas.length;
+  const aboveTargetShare = stats.areas.filter((area) => area > profile.targetMedian).length / stats.areas.length;
+  const skewPenalty = Math.abs(belowTargetShare - aboveTargetShare);
+  const lowAreaLimit = Math.max(3, Math.floor(profile.targetMedian * 0.75));
+  const lowAreaShare = stats.areas.filter((area) => area < lowAreaLimit).length / stats.areas.length;
+  const lowAreaPenalty = profile.targetMedian >= 6 ? lowAreaShare : 0;
+  const spreadWeight = 80 + (1 - profile.spreadRatio) * 220;
 
-  return meanError * 90 + spreadError * spreadWeight + duplicatePenalty * duplicateWeight + tinyPenalty * 24;
+  return (
+    medianError * 190 +
+    iqrError * spreadWeight +
+    skewPenalty * 120 +
+    lowAreaPenalty * 180 +
+    duplicatePenalty * duplicateWeight +
+    tinyPenalty * 24
+  );
 }
 
 function splitRect(rect, rng, size, tuning) {
@@ -464,17 +477,16 @@ function splitRect(rect, rng, size, tuning) {
 }
 
 function generatorProfile(size, tuning) {
-  const baseMaxArea = size <= 6 ? 8 : size <= 8 ? 12 : size <= 10 ? 16 : size <= 20 ? 28 : 36;
-  const meanRatio = tuning.meanArea / TUNING_MAX;
+  const targetMedian = Math.max(3, tuning.meanArea);
   const spreadRatio = tuning.areaSpread / TUNING_MAX;
-  const targetMean = 3 + baseMaxArea * (0.22 + meanRatio * 1.75);
-  const targetStdev = spreadRatio === 0 ? 0 : Math.max(0.35, targetMean * spreadRatio * 1.05);
+  const targetIqr = spreadRatio === 0 ? 0 : Math.max(1, targetMedian * spreadRatio * 1.25);
+  const meanRatio = targetMedian / TUNING_MAX;
 
   return {
-    maxArea: Math.max(4, Math.round(targetMean + targetStdev * 2.3)),
-    minArea: targetMean < 5 ? 2 : 3,
-    targetMean,
-    targetStdev,
+    maxArea: Math.max(4, Math.round(targetMedian + targetIqr * 2.8)),
+    minArea: Math.max(2, Math.floor(targetMedian * (0.72 - spreadRatio * 0.2))),
+    targetMedian,
+    targetIqr,
     spreadRatio,
     stopBase: Math.max(0.08, Math.min(0.82, 0.18 + meanRatio * 0.48)),
     stopSlope: Math.max(0.12, 0.62 - meanRatio * 0.24),
@@ -504,7 +516,7 @@ function pickCut(cuts, length, otherSide, profile, rng) {
     const leftArea = cut * otherSide;
     const rightArea = (length - cut) * otherSide;
     const smallerArea = Math.min(leftArea, rightArea);
-    const targetDistance = Math.abs(smallerArea - profile.targetMean) / Math.max(0.75, profile.targetStdev);
+    const targetDistance = Math.abs(smallerArea - profile.targetMedian) / Math.max(1, profile.targetIqr);
     const tinyPenalty = tinyAreaPenalty(leftArea) * tinyAreaPenalty(rightArea);
     const balance = Math.max(0.2, smallerArea / Math.max(leftArea, rightArea));
     const leftAspect = Math.max(cut / otherSide, otherSide / cut);
@@ -531,11 +543,24 @@ function tinyAreaPenalty(area) {
 
 function areaStats(solution) {
   const areas = solution.map((rect) => rect.w * rect.h);
+  areas.sort((a, b) => a - b);
   const mean = areas.reduce((sum, area) => sum + area, 0) / areas.length;
   const variance = areas.reduce((sum, area) => sum + (area - mean) ** 2, 0) / areas.length;
   const counts = new Map();
   for (const area of areas) counts.set(area, (counts.get(area) || 0) + 1);
-  return { mean, stdev: Math.sqrt(variance), counts };
+  const q1 = quantile(areas, 0.25);
+  const median = quantile(areas, 0.5);
+  const q3 = quantile(areas, 0.75);
+  return { areas, mean, stdev: Math.sqrt(variance), q1, median, q3, iqr: q3 - q1, counts };
+}
+
+function quantile(sorted, q) {
+  if (sorted.length === 0) return 0;
+  const position = (sorted.length - 1) * q;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
 }
 
 function histogramConcentration(counts, total) {
