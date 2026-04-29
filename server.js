@@ -765,10 +765,15 @@ async function handleGetLeaderboard(req, res) {
   const result = await pool.query(`
     select display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
     from (
-      select *,
+      select best_per_user.*,
              row_number() over (partition by size order by elapsed_ms asc, created_at asc) as rank
-      from shikaka_scores
-      where size = any($1::int[])
+      from (
+        select distinct on (size, user_key)
+               display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
+        from shikaka_scores
+        where size = any($1::int[])
+        order by size, user_key, elapsed_ms asc, created_at asc
+      ) best_per_user
     ) ranked
     where rank <= 20
     order by size asc, elapsed_ms asc, created_at asc
