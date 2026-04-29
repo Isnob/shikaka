@@ -25,7 +25,20 @@ const metaMode = document.querySelector("#metaMode");
 const leaderboardTitle = document.querySelector("#leaderboardTitle");
 const leaderboardList = document.querySelector("#leaderboard");
 
-const palette = ["#dce7c8", "#c7f089", "#bcece7", "#dde4c6", "#d0e4c2", "#c8e6d7", "#e5e4dd", "#d8e8bd"];
+const palette = [
+  "#c7f089",
+  "#bcece7",
+  "#ffdad6",
+  "#ffd9a8",
+  "#d8e2ff",
+  "#f2daff",
+  "#dce7c8",
+  "#f0e1c2",
+  "#c4e7ff",
+  "#f9d7e3",
+  "#e5e4dd",
+  "#cdeccf"
+];
 const guestStorageKey = "shikaka:guest-state";
 const tuningMax = 30;
 const defaultTuning = { meanArea: 15, areaSpread: 15 };
