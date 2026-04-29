@@ -66,8 +66,8 @@ createServer(async (req, res) => {
       return;
     }
 
-    if (req.url === "/api/leaderboard" && req.method === "GET") {
-      await handleGetLeaderboard(res);
+    if (req.url?.startsWith("/api/leaderboard") && req.method === "GET") {
+      await handleGetLeaderboard(req, res);
       return;
     }
 
@@ -757,14 +757,22 @@ function mulberry32(seed) {
   };
 }
 
-async function handleGetLeaderboard(res) {
+async function handleGetLeaderboard(req, res) {
+  const url = new URL(req.url || "/", "http://localhost");
+  const size = Number(url.searchParams.get("size"));
+  if (!Number.isInteger(size)) {
+    sendJson(res, 400, { error: "bad_size" });
+    return;
+  }
+
   const result = await pool.query(`
     select display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
     from shikaka_scores
+    where size = $1
     order by elapsed_ms asc, created_at asc
     limit 20
-  `);
-  sendJson(res, 200, { scores: result.rows });
+  `, [size]);
+  sendJson(res, 200, { size, scores: result.rows });
 }
 
 function handleGoogleStart(req, res) {

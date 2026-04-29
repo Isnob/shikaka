@@ -22,6 +22,7 @@ const metaSeed = document.querySelector("#metaSeed");
 const metaCovered = document.querySelector("#metaCovered");
 const metaTime = document.querySelector("#metaTime");
 const metaMode = document.querySelector("#metaMode");
+const leaderboardTitle = document.querySelector("#leaderboardTitle");
 const leaderboardList = document.querySelector("#leaderboard");
 
 const palette = ["#f7c6bd", "#f2d377", "#9fd8cb", "#a8c8f2", "#d7b6e8", "#b8d98b", "#f4b06a", "#b7c4d8"];
@@ -143,7 +144,7 @@ async function boot() {
   } else {
     login.classList.remove("hidden");
   }
-  await loadLeaderboard();
+  await loadLeaderboard(Number(sizeSelect.value));
 }
 
 async function loadGame({ guest = false } = {}) {
@@ -170,6 +171,7 @@ async function loadGame({ guest = false } = {}) {
   updateTuningLabels();
   startClock();
   render();
+  await loadLeaderboard(state.size);
 }
 
 async function startNewGame(size, tuning) {
@@ -181,6 +183,7 @@ async function startNewGame(size, tuning) {
   }
   render();
   scheduleSave();
+  await loadLeaderboard(state.size);
 }
 
 async function makeGame(size, tuning) {
@@ -942,7 +945,7 @@ async function submitScoreIfEligible() {
     state.scoreSubmitted = true;
     state.scoreError = null;
     await saveState();
-    await loadLeaderboard();
+    await loadLeaderboard(state.size);
     render();
     return;
   }
@@ -959,8 +962,9 @@ function scoreErrorText(error) {
   return "Готово: результат не отправился";
 }
 
-async function loadLeaderboard() {
-  const data = await api("/api/leaderboard");
+async function loadLeaderboard(size = state?.size || Number(sizeSelect.value)) {
+  leaderboardTitle.textContent = `Турнирная таблица ${size}x${size}`;
+  const data = await api(`/api/leaderboard?size=${encodeURIComponent(size)}`);
   const scores = data.scores || [];
   leaderboardList.innerHTML = "";
   if (scores.length === 0) {
