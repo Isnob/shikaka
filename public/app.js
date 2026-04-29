@@ -440,11 +440,8 @@ function render() {
 
       const regionIndex = assignments.get(key(x, y));
       if (regionIndex !== undefined) {
-        const mark = document.createElement("span");
-        mark.className = "mark";
-        mark.style.background = palette[regionIndex % palette.length];
+        cell.classList.add("filled");
         cell.style.background = palette[regionIndex % palette.length];
-        cell.append(mark);
       }
 
       if (preview && contains(preview, x, y)) {
