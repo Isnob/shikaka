@@ -759,20 +759,24 @@ function mulberry32(seed) {
 
 async function handleGetLeaderboard(req, res) {
   const url = new URL(req.url || "/", "http://localhost");
-  const size = Number(url.searchParams.get("size"));
-  if (!Number.isInteger(size)) {
-    sendJson(res, 400, { error: "bad_size" });
-    return;
-  }
+  const sizeParam = url.searchParams.get("size");
+  const sizes = sizeParam ? [Number(sizeParam)] : [6, 8, 10, 20, 26];
 
   const result = await pool.query(`
     select display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
-    from shikaka_scores
-    where size = $1
-    order by elapsed_ms asc, created_at asc
-    limit 20
-  `, [size]);
-  sendJson(res, 200, { size, scores: result.rows });
+    from (
+      select *,
+             row_number() over (partition by size order by elapsed_ms asc, created_at asc) as rank
+      from shikaka_scores
+      where size = any($1::int[])
+    ) ranked
+    where rank <= 20
+    order by size asc, elapsed_ms asc, created_at asc
+  `, [sizes]);
+
+  const groups = Object.fromEntries(sizes.map((size) => [size, []]));
+  for (const row of result.rows) groups[row.size].push(row);
+  sendJson(res, 200, { sizes, groups });
 }
 
 function handleGoogleStart(req, res) {

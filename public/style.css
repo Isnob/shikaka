@@ -375,6 +375,15 @@ input {
   padding-left: 22px;
 }
 
+.leaderboardGroup + .leaderboardGroup {
+  margin-top: 14px;
+}
+
+.leaderboardGroup h4 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
 .leaderboard li {
   color: var(--muted);
 }

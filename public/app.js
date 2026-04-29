@@ -144,7 +144,7 @@ async function boot() {
   } else {
     login.classList.remove("hidden");
   }
-  await loadLeaderboard(Number(sizeSelect.value));
+  await loadLeaderboard();
 }
 
 async function loadGame({ guest = false } = {}) {
@@ -171,7 +171,7 @@ async function loadGame({ guest = false } = {}) {
   updateTuningLabels();
   startClock();
   render();
-  await loadLeaderboard(state.size);
+  await loadLeaderboard();
 }
 
 async function startNewGame(size, tuning) {
@@ -183,7 +183,7 @@ async function startNewGame(size, tuning) {
   }
   render();
   scheduleSave();
-  await loadLeaderboard(state.size);
+  await loadLeaderboard();
 }
 
 async function makeGame(size, tuning) {
@@ -945,7 +945,7 @@ async function submitScoreIfEligible() {
     state.scoreSubmitted = true;
     state.scoreError = null;
     await saveState();
-    await loadLeaderboard(state.size);
+    await loadLeaderboard();
     render();
     return;
   }
@@ -962,25 +962,39 @@ function scoreErrorText(error) {
   return "Готово: результат не отправился";
 }
 
-async function loadLeaderboard(size = state?.size || Number(sizeSelect.value)) {
-  leaderboardTitle.textContent = `Турнирная таблица ${size}x${size}`;
-  const data = await api(`/api/leaderboard?size=${encodeURIComponent(size)}`);
-  const scores = data.scores || [];
+async function loadLeaderboard() {
+  leaderboardTitle.textContent = "Турнирные таблицы";
+  const data = await api("/api/leaderboard");
+  const sizes = data.sizes || [6, 8, 10, 20, 26];
+  const groups = data.groups || {};
   leaderboardList.innerHTML = "";
-  if (scores.length === 0) {
-    const item = document.createElement("li");
-    item.textContent = "Пока пусто";
-    leaderboardList.append(item);
-    return;
-  }
-  for (const score of scores) {
-    const item = document.createElement("li");
-    const name = document.createElement("span");
-    name.textContent = score.display_name || "Player";
-    const meta = document.createElement("small");
-    meta.textContent = `${score.size}x${score.size}, ${formatElapsed(score.elapsed_ms)}`;
-    item.append(name, meta);
-    leaderboardList.append(item);
+
+  for (const size of sizes) {
+    const section = document.createElement("section");
+    section.className = "leaderboardGroup";
+    const title = document.createElement("h4");
+    title.textContent = `${size}x${size}`;
+    const list = document.createElement("ol");
+    const scores = groups[size] || [];
+
+    if (scores.length === 0) {
+      const item = document.createElement("li");
+      item.textContent = "Пока пусто";
+      list.append(item);
+    } else {
+      for (const score of scores) {
+        const item = document.createElement("li");
+        const name = document.createElement("span");
+        name.textContent = score.display_name || "Player";
+        const meta = document.createElement("small");
+        meta.textContent = formatElapsed(score.elapsed_ms);
+        item.append(name, meta);
+        list.append(item);
+      }
+    }
+
+    section.append(title, list);
+    leaderboardList.append(section);
   }
 }
 
