@@ -4,20 +4,30 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Shikaka</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "@material/web/": "https://esm.run/@material/web/"
+        }
+      }
+    </script>
+    <script type="module">
+      import "@material/web/all.js";
+      import { styles as typescaleStyles } from "@material/web/typography/md-typescale-styles.js";
+      document.adoptedStyleSheets.push(typescaleStyles.styleSheet);
+    </script>
   </head>
   <body>
     <main class="app">
       <section class="login" id="login">
         <form class="login__panel" id="loginForm">
-          <h1>Shikaka</h1>
-          <label>
-            Пароль
-            <input id="password" name="password" type="password" autocomplete="current-password" required />
-          </label>
-          <button type="submit">Войти</button>
-          <a class="googleLogin hidden" id="googleLogin" href="/auth/google/start">Войти через Google</a>
-          <button class="guestLogin" id="guestLogin" type="button">Играть без входа</button>
+          <h1 class="md-typescale-display-medium">Shikaka</h1>
+          <md-outlined-text-field id="password" name="password" type="password" label="Пароль" autocomplete="current-password" required></md-outlined-text-field>
+          <md-filled-button type="submit">Войти</md-filled-button>
+          <md-filled-tonal-button class="googleLogin hidden" id="googleLogin" href="/auth/google/start">Войти через Google</md-filled-tonal-button>
+          <md-filled-tonal-button class="guestLogin" id="guestLogin" type="button">Играть без входа</md-filled-tonal-button>
           <p class="error" id="loginError" role="alert"></p>
         </form>
       </section>
@@ -29,28 +39,38 @@
             <p id="status">Загрузка</p>
           </div>
           <div class="controls">
-            <select id="size">
-              <option value="6">6 x 6</option>
-              <option value="8" selected>8 x 8</option>
-              <option value="10">10 x 10</option>
-              <option value="20">20 x 20</option>
-              <option value="26">26 x 26</option>
-            </select>
+            <md-outlined-select id="size" label="Поле">
+              <md-select-option value="6">
+                <div slot="headline">6 x 6</div>
+              </md-select-option>
+              <md-select-option value="8" selected>
+                <div slot="headline">8 x 8</div>
+              </md-select-option>
+              <md-select-option value="10">
+                <div slot="headline">10 x 10</div>
+              </md-select-option>
+              <md-select-option value="20">
+                <div slot="headline">20 x 20</div>
+              </md-select-option>
+              <md-select-option value="26">
+                <div slot="headline">26 x 26</div>
+              </md-select-option>
+            </md-outlined-select>
             <div class="tuning">
               <span>Среднее</span>
-              <input id="meanArea" type="range" min="0" max="30" step="1" value="15" aria-label="Среднее" />
+              <md-slider id="meanArea" min="0" max="30" step="1" value="15" aria-label="Среднее"></md-slider>
               <output id="meanAreaLabel">15</output>
             </div>
             <div class="tuning">
               <span>Разброс</span>
-              <input id="areaSpread" type="range" min="0" max="30" step="1" value="15" aria-label="Разброс" />
+              <md-slider id="areaSpread" min="0" max="30" step="1" value="15" aria-label="Разброс"></md-slider>
               <output id="areaSpreadLabel">15</output>
             </div>
-            <button class="primaryAction" id="newGame" type="button">Новый уровень</button>
-            <button class="tonalAction" id="solve" type="button">Решение</button>
-            <button class="tonalAction" id="undo" type="button">Назад</button>
-            <button class="outlineAction" id="clear" type="button">Очистить</button>
-            <button class="outlineAction" id="logout" type="button">Выйти</button>
+            <md-filled-button class="primaryAction" id="newGame" type="button">Новый уровень</md-filled-button>
+            <md-filled-tonal-button class="tonalAction" id="solve" type="button">Решение</md-filled-tonal-button>
+            <md-filled-tonal-button class="tonalAction" id="undo" type="button">Назад</md-filled-tonal-button>
+            <md-outlined-button class="outlineAction dangerAction" id="clear" type="button">Очистить</md-outlined-button>
+            <md-outlined-button class="outlineAction" id="logout" type="button">Выйти</md-outlined-button>
           </div>
         </header>
 

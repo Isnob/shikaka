@@ -60,7 +60,7 @@ boot();
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   loginError.textContent = "";
-  const password = document.querySelector("#password").value;
+  const password = getControlValue(document.querySelector("#password"));
   const response = await api("/api/login", { method: "POST", body: { password } });
   if (!response.ok) {
     loginError.textContent = "Пароль не подошел";
@@ -74,7 +74,7 @@ guestLogin.addEventListener("click", async () => {
 });
 
 newGameButton.addEventListener("click", async () => {
-  await startNewGame(Number(sizeSelect.value), readTuning());
+  await startNewGame(Number(getControlValue(sizeSelect)), readTuning());
 });
 
 meanAreaSlider.addEventListener("input", () => {
@@ -178,9 +178,9 @@ async function loadGame({ guest = false } = {}) {
     }
   }
 
-  sizeSelect.value = String(state.size);
-  meanAreaSlider.value = String(state.tuning.meanArea);
-  areaSpreadSlider.value = String(state.tuning.areaSpread);
+  setControlValue(sizeSelect, state.size);
+  setControlValue(meanAreaSlider, state.tuning.meanArea);
+  setControlValue(areaSpreadSlider, state.tuning.areaSpread);
   updateTuningLabels();
   startClock();
   render();
@@ -188,11 +188,11 @@ async function loadGame({ guest = false } = {}) {
 }
 
 async function startNewGame(size, tuning) {
-  newGameButton.disabled = true;
+  setControlDisabled(newGameButton, true);
   try {
     state = await makeGame(size, tuning);
   } finally {
-    newGameButton.disabled = false;
+    setControlDisabled(newGameButton, false);
   }
   render();
   scheduleSave();
@@ -625,7 +625,7 @@ function updateStatus() {
   logoutButton.textContent = isGuest ? "Войти" : "Выйти";
   statusLine.textContent = solved ? solvedStatusText() : "Выдели все прямоугольники";
   statusLine.style.color = solved ? "var(--good)" : "var(--muted)";
-  undoButton.disabled = state.history.length === 0;
+  setControlDisabled(undoButton, state.history.length === 0);
 }
 
 function normalizeState(saved) {
@@ -659,14 +659,28 @@ function pushHistory() {
 
 function readTuning() {
   return {
-    meanArea: Number(meanAreaSlider.value),
-    areaSpread: Number(areaSpreadSlider.value)
+    meanArea: Number(getControlValue(meanAreaSlider)),
+    areaSpread: Number(getControlValue(areaSpreadSlider))
   };
 }
 
 function updateTuningLabels() {
-  meanAreaLabel.value = meanAreaSlider.value;
-  areaSpreadLabel.value = areaSpreadSlider.value;
+  meanAreaLabel.value = getControlValue(meanAreaSlider);
+  areaSpreadLabel.value = getControlValue(areaSpreadSlider);
+}
+
+function getControlValue(control) {
+  return control?.value ?? "";
+}
+
+function setControlValue(control, value) {
+  if (!control) return;
+  control.value = String(value);
+}
+
+function setControlDisabled(control, disabled) {
+  if (!control) return;
+  control.disabled = disabled;
 }
 
 function generatorProfile(size, tuning) {
