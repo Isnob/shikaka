@@ -232,23 +232,27 @@ md-slider {
   right: 0;
   z-index: 100;
   width: min(100%, 560px);
-  max-height: 0;
   opacity: 0;
-  overflow: hidden;
   pointer-events: none;
-  transform: translateY(-8px) scale(0.98);
+  visibility: hidden;
+  transform: translateY(-8px);
   transform-origin: top right;
+  will-change: opacity, transform;
   transition:
-    max-height 220ms cubic-bezier(0.2, 0, 0, 1),
     opacity 160ms ease,
-    transform 220ms cubic-bezier(0.2, 0, 0, 1);
+    transform 220ms cubic-bezier(0.2, 0, 0, 1),
+    visibility 0s linear 220ms;
 }
 
 .advanced-card.open {
-  max-height: 560px;
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(0) scale(1);
+  visibility: visible;
+  transform: translateY(0);
+  transition:
+    opacity 160ms ease,
+    transform 220ms cubic-bezier(0.2, 0, 0, 1),
+    visibility 0s;
 }
 
 .advanced-card__inner {
@@ -256,7 +260,9 @@ md-slider {
   background: var(--md-sys-color-surface-container-high);
   border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: var(--shape-lg);
-  box-shadow: 0 2px 8px rgb(26 28 22 / 0.12);
+  box-shadow:
+    0 12px 28px rgb(26 28 22 / 0.16),
+    0 3px 8px rgb(26 28 22 / 0.10);
   display: flex;
   flex-direction: column;
   gap: 16px;
