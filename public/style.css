@@ -401,6 +401,14 @@ md-dialog:not([open]) {
   --board-cell: min(4.4vw, 34px);
 }
 
+.board[data-size="15"] {
+  --board-cell: min(5.9vw, 42px);
+}
+
+.board[data-size="15"] .cell {
+  font-size: 16px;
+}
+
 .board[data-size="20"] .cell {
   font-size: 14px;
 }
@@ -413,6 +421,7 @@ md-dialog:not([open]) {
   font-size: 12px;
 }
 
+.board[data-size="15"] .cell.clue::after,
 .board[data-size="20"] .cell.clue::after,
 .board[data-size="26"] .cell.clue::after {
   inset: 4px;
@@ -813,6 +822,10 @@ md-dialog:not([open]) {
   .tuning output {
     min-width: 26px;
     min-height: 26px;
+  }
+
+  .board[data-size="15"] {
+    --board-cell: 38px;
   }
 
   .board[data-size="20"] {
