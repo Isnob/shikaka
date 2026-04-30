@@ -10,15 +10,15 @@ Shikaka is designed around a lean tech stack, utilizing vanilla APIs wherever po
 
 ```mermaid
 graph LR
-    Client[Vanilla JS Client] -- JSON API --> Server[Node.js Native HTTP]
-    Server -- pg module --> DB[(PostgreSQL)]
+    Client[Vanilla JS Client] -- JSON API --> Server[Python Native HTTP]
+    Server -- psycopg --> DB[(PostgreSQL)]
     
     subgraph Frontend [Browser]
     Client --> Logic[State Management]
     Logic --> DOM[DOM Render Loop]
     end
     
-    subgraph Backend [Node.js]
+    subgraph Backend [Python]
     Server --> Router[Native Router]
     Router --> Auth[HMAC Session Auth]
     Router --> Storage[JSON Persistence]
@@ -30,36 +30,43 @@ graph LR
 - **State Synchronization:** The game logic runs locally in the browser, pushing a serialized JSON state to the backend to persist progress.
 - **Custom Render Loop:** UI updates are handled through direct, efficient DOM manipulation.
 
-### The Backend (`server.js`)
-- **Native `node:http`:** No Express or Fastify. Routing and static file serving are implemented natively to minimize the footprint.
-- **Lean Dependencies:** The only external package is `pg` for database communication.
-- **Security:** Session management uses cookie-based tokens signed with HMAC SHA-256 (via `node:crypto`) to prevent tampering.
+### The Backend (`server.py`)
+- **Native `http.server`:** No Django/FastAPI yet. Routing and static file serving are implemented directly to keep the migration from Node small and predictable.
+- **Lean Dependencies:** The only Python package is `psycopg[binary]` for PostgreSQL.
+- **Security:** Session management uses cookie-based tokens signed with HMAC SHA-256 to prevent tampering.
 - **Data Persistence:** Relies on PostgreSQL's `ON CONFLICT` feature for atomic upserts, storing the entire game state as a single JSON payload.
+- **Legacy Node Server:** `server.js` is kept temporarily as a reference/fallback and can be run with `npm run start:node`.
 
 ## Local Setup
 
 ### Requirements
 - Node.js >= 18
+- Python >= 3.11
 - PostgreSQL
 
 ### Running the App
 
-1. Install the database driver:
+1. Install Python dependencies:
+   ```bash
+   python3 -m pip install -r requirements.txt
+   ```
+
+2. Install Node dependencies for frontend syntax checks / legacy fallback:
    ```bash
    npm install
    ```
 
-2. Create the local database:
+3. Create the local database:
    ```bash
    createdb shikaka
    ```
 
-3. Configure environment variables:
+4. Configure environment variables:
    ```bash
    cp .env.example .env
    ```
 
-4. Start the server:
+5. Start the server:
    ```bash
    npm start
    ```
@@ -104,3 +111,5 @@ GOOGLE_CLIENT_ID='...apps.googleusercontent.com' \
 GOOGLE_CLIENT_SECRET='...' \
 npm start
 ```
+
+`npm start` runs `python3 server.py`. The existing systemd unit can keep using `npm start` while the backend implementation is Python.
