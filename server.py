@@ -127,6 +127,64 @@ def init_database():
     )
     """,
     """
+    create table if not exists shikaka_attempts (
+      user_key text not null,
+      size integer not null,
+      seed text not null,
+      mean_area integer not null,
+      area_spread integer not null,
+      status text not null default 'started',
+      unsuccessful_reason text,
+      started_at timestamptz not null default now(),
+      finished_at timestamptz,
+      updated_at timestamptz not null default now(),
+      primary key (user_key, size, seed, mean_area, area_spread)
+    )
+    """,
+    """
+    insert into shikaka_attempts (
+      user_key, size, seed, mean_area, area_spread, status, started_at, finished_at, updated_at
+    )
+    select user_key, size, seed, mean_area, area_spread, 'success', created_at, created_at, now()
+    from shikaka_scores
+    on conflict (user_key, size, seed, mean_area, area_spread) do update
+    set status = 'success',
+        unsuccessful_reason = null,
+        finished_at = excluded.finished_at,
+        updated_at = now()
+    """,
+    """
+    insert into shikaka_attempts (
+      user_key, size, seed, mean_area, area_spread, status, unsuccessful_reason, started_at, finished_at, updated_at
+    )
+    select reveals.user_key, reveals.size, reveals.seed, reveals.mean_area, reveals.area_spread,
+           'unsuccessful', 'solution', reveals.revealed_at, reveals.revealed_at, now()
+    from shikaka_reveals reveals
+    where not exists (
+      select 1
+      from shikaka_scores scores
+      where scores.user_key = reveals.user_key
+        and scores.size = reveals.size
+        and scores.seed = reveals.seed
+        and scores.mean_area = reveals.mean_area
+        and scores.area_spread = reveals.area_spread
+    )
+    on conflict (user_key, size, seed, mean_area, area_spread) do update
+    set status = case
+          when shikaka_attempts.status = 'success' then shikaka_attempts.status
+          else 'unsuccessful'
+        end,
+        unsuccessful_reason = case
+          when shikaka_attempts.status = 'success' then shikaka_attempts.unsuccessful_reason
+          else 'solution'
+        end,
+        finished_at = case
+          when shikaka_attempts.status = 'success' then shikaka_attempts.finished_at
+          else excluded.finished_at
+        end,
+        updated_at = now()
+    """,
+    """
     create table if not exists shikaka_sessions (
       session_hash text primary key,
       payload jsonb not null,
@@ -287,6 +345,9 @@ class ShikakaHandler(BaseHTTPRequestHandler):
       """,
       (size, str(level["seed"]), tuning["meanArea"], tuning["areaSpread"], Jsonb(level)),
     )
+    auth = self.get_auth()
+    if auth:
+      record_level_started(auth["stateKey"], size, str(level["seed"]), tuning["meanArea"], tuning["areaSpread"])
     self.send_json(200, {"level": public_level(level)})
 
   def handle_get_solution(self):
@@ -312,6 +373,8 @@ class ShikakaHandler(BaseHTTPRequestHandler):
       """,
       (auth["stateKey"], size, seed, mean_area, area_spread),
     )
+    if is_preset(size, mean_area, area_spread):
+      record_level_unsuccessful(auth["stateKey"], size, seed, mean_area, area_spread, "solution")
     self.send_json(200, {"solution": level["solution"]})
 
   def handle_post_score(self, auth):
@@ -351,6 +414,7 @@ class ShikakaHandler(BaseHTTPRequestHandler):
       """,
       (auth["stateKey"], display_name, size, seed, mean_area, area_spread, elapsed_ms),
     )
+    record_level_success(auth["stateKey"], size, seed, mean_area, area_spread)
     self.send_json(200, {"ok": True})
 
   def handle_get_leaderboard(self, parsed):
@@ -416,14 +480,29 @@ class ShikakaHandler(BaseHTTPRequestHandler):
     )
     name = (user or {}).get("name") or (user or {}).get("email") or (score_name or {}).get("display_name") or "Player"
 
+    preset_tuples = [(preset["size"], preset["meanArea"], preset["areaSpread"]) for preset in PRESETS]
+    preset_sql = ", ".join(["(%s, %s, %s)"] * len(preset_tuples))
+    preset_params = [value for preset in preset_tuples for value in preset]
     rows = query(
-      """
+      f"""
       select size, mean_area, area_spread, elapsed_ms
       from shikaka_scores
       where user_key = %s
+        and (size, mean_area, area_spread) in ({preset_sql})
       """,
-      (user_key,),
+      tuple([user_key, *preset_params]),
       fetch=True,
+    )
+    unsuccessful = query(
+      f"""
+      select count(*) as count
+      from shikaka_attempts
+      where user_key = %s
+        and status = 'unsuccessful'
+        and (size, mean_area, area_spread) in ({preset_sql})
+      """,
+      tuple([user_key, *preset_params]),
+      one=True,
     )
 
     grouped = {}
@@ -444,7 +523,7 @@ class ShikakaHandler(BaseHTTPRequestHandler):
     self.send_json(200, {
       "name": name,
       "totalSuccess": len(rows),
-      "totalUnsuccessful": 0,
+      "totalUnsuccessful": unsuccessful["count"] if unsuccessful else 0,
       "presets": presets,
     })
 
@@ -1024,6 +1103,95 @@ def is_preset(size, mean_area, area_spread):
   return any(
     preset["size"] == size and preset["meanArea"] == mean_area and preset["areaSpread"] == area_spread
     for preset in PRESETS
+  )
+
+
+def record_level_started(user_key, size, seed, mean_area, area_spread):
+  with connect() as conn:
+    with conn.cursor() as cur:
+      cur.execute(
+        """
+        update shikaka_attempts
+        set status = 'unsuccessful',
+            unsuccessful_reason = 'abandoned',
+            finished_at = now(),
+            updated_at = now()
+        where user_key = %s
+          and status = 'started'
+        """,
+        (user_key,),
+      )
+      if not is_preset(size, mean_area, area_spread):
+        return
+      cur.execute(
+        """
+        insert into shikaka_attempts (
+          user_key, size, seed, mean_area, area_spread, status, started_at, updated_at
+        )
+        values (%s, %s, %s, %s, %s, 'started', now(), now())
+        on conflict (user_key, size, seed, mean_area, area_spread) do update
+        set status = case
+              when shikaka_attempts.status = 'success' then shikaka_attempts.status
+              else 'started'
+            end,
+            unsuccessful_reason = case
+              when shikaka_attempts.status = 'success' then shikaka_attempts.unsuccessful_reason
+              else null
+            end,
+            started_at = case
+              when shikaka_attempts.status = 'success' then shikaka_attempts.started_at
+              else excluded.started_at
+            end,
+            finished_at = case
+              when shikaka_attempts.status = 'success' then shikaka_attempts.finished_at
+              else null
+            end,
+            updated_at = now()
+        """,
+        (user_key, size, seed, mean_area, area_spread),
+      )
+
+
+def record_level_success(user_key, size, seed, mean_area, area_spread):
+  query(
+    """
+    insert into shikaka_attempts (
+      user_key, size, seed, mean_area, area_spread, status, started_at, finished_at, updated_at
+    )
+    values (%s, %s, %s, %s, %s, 'success', now(), now(), now())
+    on conflict (user_key, size, seed, mean_area, area_spread) do update
+    set status = 'success',
+        unsuccessful_reason = null,
+        finished_at = now(),
+        updated_at = now()
+    """,
+    (user_key, size, seed, mean_area, area_spread),
+  )
+
+
+def record_level_unsuccessful(user_key, size, seed, mean_area, area_spread, reason):
+  query(
+    """
+    insert into shikaka_attempts (
+      user_key, size, seed, mean_area, area_spread, status, unsuccessful_reason, started_at, finished_at, updated_at
+    )
+    values (%s, %s, %s, %s, %s, 'unsuccessful', %s, now(), now(), now())
+    on conflict (user_key, size, seed, mean_area, area_spread) do update
+    set status = case
+          when shikaka_attempts.status = 'success' then shikaka_attempts.status
+          else 'unsuccessful'
+        end,
+        unsuccessful_reason = case
+          when shikaka_attempts.status = 'success' then shikaka_attempts.unsuccessful_reason
+          else excluded.unsuccessful_reason
+        end,
+        finished_at = case
+          when shikaka_attempts.status = 'success' then shikaka_attempts.finished_at
+          else now()
+        end,
+        updated_at = now()
+    """,
+    (user_key, size, seed, mean_area, area_spread, reason),
   )
 
 
