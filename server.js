@@ -21,6 +21,15 @@ const STATE_KEY = "solo";
 const TUNING_MAX = 30;
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
+const PRESETS = [
+  { size: 6, meanArea: 5, areaSpread: 6 },
+  { size: 8, meanArea: 5, areaSpread: 15 },
+  { size: 10, meanArea: 6, areaSpread: 10 },
+  { size: 15, meanArea: 7, areaSpread: 14 },
+  { size: 20, meanArea: 8, areaSpread: 17 },
+  { size: 26, meanArea: 8, areaSpread: 19 }
+];
+
 const pool = new Pool({ connectionString: DATABASE_URL });
 
 const mimeTypes = new Map([
@@ -63,6 +72,11 @@ createServer(async (req, res) => {
         googleConfigured: isGoogleConfigured(),
         user: auth?.user || null
       });
+      return;
+    }
+
+    if (req.url?.startsWith("/api/user-stats") && req.method === "GET") {
+      await handleGetUserStats(req, res);
       return;
     }
 
@@ -173,6 +187,19 @@ async function initDatabase() {
     )
   `);
   await pool.query(`
+    create table if not exists shikaka_events (
+      id bigserial primary key,
+      user_key text not null,
+      event_type text not null, -- 'start', 'solve', 'reveal'
+      size integer not null,
+      seed text not null,
+      mean_area integer not null,
+      area_spread integer not null,
+      elapsed_ms integer,
+      created_at timestamptz not null default now()
+    )
+  `);
+  await pool.query(`
     create table if not exists shikaka_sessions (
       session_hash text primary key,
       payload jsonb not null,
@@ -239,21 +266,34 @@ async function handlePostScore(req, res, auth) {
     return;
   }
 
-  const displayName = auth.user?.name || auth.user?.email || "Player";
+  const isPreset = PRESETS.some(
+    (p) => p.size === size && p.meanArea === meanArea && p.areaSpread === areaSpread
+  );
+
+  if (isPreset) {
+    const displayName = auth.user?.name || auth.user?.email || "Player";
+    await pool.query(
+      `insert into shikaka_scores (user_key, display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7, now())
+       on conflict (user_key, size, seed) do update
+       set elapsed_ms = least(shikaka_scores.elapsed_ms, excluded.elapsed_ms),
+           display_name = excluded.display_name,
+           mean_area = excluded.mean_area,
+           area_spread = excluded.area_spread`,
+      [auth.stateKey, displayName, size, seed, meanArea, areaSpread, elapsedMs]
+    );
+  }
+
   await pool.query(
-    `insert into shikaka_scores (user_key, display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at)
-     values ($1, $2, $3, $4, $5, $6, $7, now())
-     on conflict (user_key, size, seed) do update
-     set elapsed_ms = least(shikaka_scores.elapsed_ms, excluded.elapsed_ms),
-         display_name = excluded.display_name,
-         mean_area = excluded.mean_area,
-         area_spread = excluded.area_spread`,
-    [auth.stateKey, displayName, size, seed, meanArea, areaSpread, elapsedMs]
+    `insert into shikaka_events (user_key, event_type, size, seed, mean_area, area_spread, elapsed_ms, created_at)
+     values ($1, 'solve', $2, $3, $4, $5, $6, now())`,
+    [auth.stateKey, size, seed, meanArea, areaSpread, elapsedMs]
   );
   sendJson(res, 200, { ok: true });
 }
 
 async function handleCreateLevel(req, res) {
+  const auth = await getAuth(req);
   const body = await readJson(req, 16_384);
   const size = Number(body.size);
   const tuning = {
@@ -262,7 +302,7 @@ async function handleCreateLevel(req, res) {
   };
 
   if (
-    ![6, 8, 10, 20, 26].includes(size) ||
+    !PRESETS.some((preset) => preset.size === size) ||
     !Number.isInteger(tuning.meanArea) ||
     !Number.isInteger(tuning.areaSpread) ||
     tuning.meanArea < 0 ||
@@ -281,6 +321,15 @@ async function handleCreateLevel(req, res) {
      on conflict (size, seed, mean_area, area_spread) do nothing`,
     [size, String(level.seed), tuning.meanArea, tuning.areaSpread, level]
   );
+
+  if (auth) {
+    await pool.query(
+      `insert into shikaka_events (user_key, event_type, size, seed, mean_area, area_spread, created_at)
+       values ($1, 'start', $2, $3, $4, $5, now())`,
+      [auth.stateKey, size, String(level.seed), tuning.meanArea, tuning.areaSpread]
+    );
+  }
+
   sendJson(res, 200, { level: publicLevel(level) });
 }
 
@@ -308,6 +357,12 @@ async function handleGetSolution(req, res) {
      values ($1, $2, $3, $4, $5, now())
      on conflict (user_key, size, seed, mean_area, area_spread)
      do update set revealed_at = excluded.revealed_at`,
+    [auth.stateKey, size, seed, meanArea, areaSpread]
+  );
+
+  await pool.query(
+    `insert into shikaka_events (user_key, event_type, size, seed, mean_area, area_spread, created_at)
+     values ($1, 'reveal', $2, $3, $4, $5, now())`,
     [auth.stateKey, size, seed, meanArea, areaSpread]
   );
 
@@ -759,29 +814,98 @@ function mulberry32(seed) {
 
 async function handleGetLeaderboard(req, res) {
   const url = new URL(req.url || "/", "http://localhost");
-  const sizeParam = url.searchParams.get("size");
-  const sizes = sizeParam ? [Number(sizeParam)] : [6, 8, 10, 20, 26];
+  const sizes = PRESETS.map(p => p.size);
 
   const result = await pool.query(`
-    select display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
+    select user_key, display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
     from (
       select best_per_user.*,
              row_number() over (partition by size order by elapsed_ms asc, created_at asc) as rank
       from (
         select distinct on (size, user_key)
-               display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
+               user_key, display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
         from shikaka_scores
-        where size = any($1::int[])
+        where (size, mean_area, area_spread) in (
+          (6, 5, 6), (8, 5, 15), (10, 6, 10), (15, 7, 14), (20, 8, 17), (26, 8, 19)
+        )
         order by size, user_key, elapsed_ms asc, created_at asc
       ) best_per_user
     ) ranked
     where rank <= 20
     order by size asc, elapsed_ms asc, created_at asc
-  `, [sizes]);
+  `);
 
   const groups = Object.fromEntries(sizes.map((size) => [size, []]));
   for (const row of result.rows) groups[row.size].push(row);
   sendJson(res, 200, { sizes, groups });
+}
+
+async function handleGetUserStats(req, res) {
+  const url = new URL(req.url || "/", "http://localhost");
+  const userKey = url.searchParams.get("userKey");
+  if (!userKey) {
+    sendJson(res, 400, { error: "missing_user_key" });
+    return;
+  }
+
+  const user = await pool.query("select name, picture from shikaka_users where google_sub = $1", [userKey.replace("google:", "")]);
+  const userName = user.rows[0]?.name || "Player";
+
+  const stats = await pool.query(`
+    select event_type, size, mean_area, area_spread, elapsed_ms
+    from shikaka_events
+    where user_key = $1
+  `, [userKey]);
+
+  const bestTimes = {};
+  const allTimes = {};
+  let totalSuccess = 0;
+  let totalStarts = 0;
+
+  for (const row of stats.rows) {
+    if (row.event_type === "start") totalStarts++;
+    if (row.event_type === "solve") {
+      totalSuccess++;
+      const key = `${row.size}-${row.mean_area}-${row.area_spread}`;
+      if (!bestTimes[key] || row.elapsed_ms < bestTimes[key]) bestTimes[key] = row.elapsed_ms;
+      if (!allTimes[key]) allTimes[key] = [];
+      allTimes[key].push(row.elapsed_ms);
+    }
+  }
+
+  const processedStats = PRESETS.map(p => {
+    const key = `${p.size}-${p.meanArea}-${p.areaSpread}`;
+    const times = allTimes[key] || [];
+    const avg = calculateIqrAverage(times);
+    return {
+      label: `${p.size}x${p.size}`,
+      best: bestTimes[key] || null,
+      average: avg
+    };
+  });
+
+  sendJson(res, 200, {
+    name: userName,
+    totalSuccess,
+    totalUnsuccessful: Math.max(0, totalStarts - totalSuccess),
+    presets: processedStats
+  });
+}
+
+function calculateIqrAverage(times) {
+  if (times.length === 0) return null;
+  if (times.length < 4) return times.reduce((a, b) => a + b, 0) / times.length;
+
+  const sorted = [...times].sort((a, b) => a - b);
+  const q1 = quantile(sorted, 0.25);
+  const q3 = quantile(sorted, 0.75);
+  const iqr = q3 - q1;
+  const lb = q1 - 1.5 * iqr;
+  const ub = q3 + 1.5 * iqr;
+
+  const filtered = sorted.filter(t => t >= lb && t <= ub);
+  if (filtered.length === 0) return sorted[Math.floor(sorted.length / 2)];
+  return filtered.reduce((a, b) => a + b, 0) / filtered.length;
 }
 
 function handleGoogleStart(req, res) {

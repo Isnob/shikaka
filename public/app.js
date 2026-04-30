@@ -13,6 +13,17 @@ const meanAreaLabel = document.querySelector("#meanAreaLabel");
 const areaSpreadSlider = document.querySelector("#areaSpread");
 const areaSpreadLabel = document.querySelector("#areaSpreadLabel");
 const newGameButton = document.querySelector("#newGame");
+const presetsContainer = document.querySelector("#presets");
+const toggleAdvancedButton = document.querySelector("#toggleAdvanced");
+const advancedPanel = document.querySelector("#advancedPanel");
+const advancedSizes = document.querySelector("#advancedSizes");
+const advancedCreateButton = document.querySelector("#advancedCreate");
+const statsDialog = document.querySelector("#statsDialog");
+const statsName = document.querySelector("#statsName");
+const statsSuccess = document.querySelector("#statsSuccess");
+const statsUnsuccessful = document.querySelector("#statsUnsuccessful");
+const statsGrid = document.querySelector("#statsGrid");
+const closeStatsButton = document.querySelector("#closeStats");
 const solveButton = document.querySelector("#solve");
 const undoButton = document.querySelector("#undo");
 const clearButton = document.querySelector("#clear");
@@ -26,22 +37,22 @@ const leaderboardTitle = document.querySelector("#leaderboardTitle");
 const leaderboardList = document.querySelector("#leaderboard");
 
 const palette = [
-  "#c8e6ff",
-  "#efdbff",
-  "#9df0fa",
-  "#ffd8e4",
-  "#ffe0b2",
-  "#c8f7c5",
-  "#d9baff",
-  "#b9e5ff",
-  "#ffcbc2",
-  "#d4f4dd",
-  "#f3d1ff",
-  "#c6ecff",
-  "#fff0a8",
-  "#b5f2e5",
+  "#cfeda1",
+  "#dde7c7",
+  "#bcece6",
+  "#f4e7b1",
+  "#ffd9bd",
   "#d7e3ff",
-  "#ffd6a5"
+  "#e9ddff",
+  "#c8f1ce",
+  "#b8dfc1",
+  "#e5e9d2",
+  "#d0e8a6",
+  "#c0e5d8",
+  "#ffe0a6",
+  "#f1d0bd",
+  "#d9e7b8",
+  "#ccead4"
 ];
 const guestStorageKey = "shikaka:guest-state";
 const tuningMax = 30;
@@ -57,6 +68,7 @@ let lastTap = null;
 let clockTimer = null;
 let boardZoom = 1;
 let boardGesture = null;
+let advancedSelectedSize = 10;
 const boardPointers = new Map();
 
 boot();
@@ -78,7 +90,50 @@ guestLogin.addEventListener("click", async () => {
 });
 
 newGameButton.addEventListener("click", async () => {
-  await startNewGame(Number(getControlValue(sizeSelect)), readTuning());
+  await startNewGame(state.size, state.tuning);
+});
+
+presetsContainer.addEventListener("click", async (event) => {
+  const button = event.target.closest("md-filled-tonal-button");
+  if (!button || button.hasAttribute("selected")) return;
+
+  const size = Number(button.dataset.size);
+  const tuning = {
+    meanArea: Number(button.dataset.mean),
+    areaSpread: Number(button.dataset.spread)
+  };
+
+  updatePresetSelection(size, tuning);
+  await startNewGame(size, tuning);
+});
+
+advancedSizes.addEventListener("click", (event) => {
+  const button = event.target.closest("md-filled-tonal-button");
+  if (!button) return;
+  advancedSelectedSize = Number(button.dataset.size);
+  updateAdvancedSizeSelection();
+});
+
+toggleAdvancedButton.addEventListener("click", () => {
+  advancedPanel.classList.toggle("hidden");
+  toggleAdvancedButton.classList.toggle("active");
+  const isOpen = !advancedPanel.classList.contains("hidden");
+  toggleAdvancedButton.setAttribute("aria-expanded", String(isOpen));
+});
+
+advancedCreateButton.addEventListener("click", async () => {
+  const tuning = readTuning();
+  const size = advancedSelectedSize;
+  updatePresetSelection(null);
+  advancedPanel.classList.add("hidden");
+  toggleAdvancedButton.classList.remove("active");
+  toggleAdvancedButton.setAttribute("aria-expanded", "false");
+  await startNewGame(size, tuning);
+});
+
+closeStatsButton.addEventListener("click", () => {
+  if (typeof statsDialog.close === "function") statsDialog.close();
+  else statsDialog.removeAttribute("open");
 });
 
 meanAreaSlider.addEventListener("input", () => {
@@ -182,13 +237,35 @@ async function loadGame({ guest = false } = {}) {
     }
   }
 
-  setControlValue(sizeSelect, state.size);
+  updatePresetSelection(state.size, state.tuning);
   setControlValue(meanAreaSlider, state.tuning.meanArea);
   setControlValue(areaSpreadSlider, state.tuning.areaSpread);
+  advancedSelectedSize = state.size;
+  updateAdvancedSizeSelection();
   updateTuningLabels();
   startClock();
   render();
   await loadLeaderboard();
+}
+
+function updatePresetSelection(size, tuning) {
+  const buttons = presetsContainer.querySelectorAll("md-filled-tonal-button");
+  buttons.forEach((btn) => {
+    const isMatch = size && tuning &&
+      Number(btn.dataset.size) === size &&
+      Number(btn.dataset.mean) === tuning.meanArea &&
+      Number(btn.dataset.spread) === tuning.areaSpread;
+    if (isMatch) btn.setAttribute("selected", "");
+    else btn.removeAttribute("selected");
+  });
+}
+
+function updateAdvancedSizeSelection() {
+  const buttons = advancedSizes.querySelectorAll("md-filled-tonal-button");
+  buttons.forEach((btn) => {
+    if (Number(btn.dataset.size) === advancedSelectedSize) btn.setAttribute("selected", "");
+    else btn.removeAttribute("selected");
+  });
 }
 
 async function startNewGame(size, tuning) {
@@ -993,7 +1070,7 @@ function scoreErrorText(error) {
 async function loadLeaderboard() {
   leaderboardTitle.textContent = "Турнирные таблицы";
   const data = await api("/api/leaderboard");
-  const sizes = data.sizes || [6, 8, 10, 20, 26];
+  const sizes = data.sizes || [6, 8, 10, 15, 20, 26];
   const groups = data.groups || {};
   leaderboardList.innerHTML = "";
 
@@ -1007,6 +1084,7 @@ async function loadLeaderboard() {
 
     if (scores.length === 0) {
       const item = document.createElement("li");
+      item.className = "empty";
       item.textContent = "Пока пусто";
       list.append(item);
     } else {
@@ -1017,6 +1095,7 @@ async function loadLeaderboard() {
         const meta = document.createElement("small");
         meta.textContent = formatElapsed(score.elapsed_ms);
         item.append(name, meta);
+        item.addEventListener("click", () => showUserStats(score.user_key));
         list.append(item);
       }
     }
@@ -1024,6 +1103,37 @@ async function loadLeaderboard() {
     section.append(title, list);
     leaderboardList.append(section);
   }
+}
+
+async function showUserStats(userKey) {
+  const data = await api(`/api/user-stats?userKey=${encodeURIComponent(userKey)}`);
+  if (!data.name) return;
+
+  statsName.textContent = `Статистика: ${data.name}`;
+  statsSuccess.textContent = data.totalSuccess;
+  statsUnsuccessful.textContent = data.totalUnsuccessful;
+
+  statsGrid.innerHTML = `
+    <div class="stats-row header">
+      <span>Поле</span>
+      <span>Лучшее</span>
+      <span>Среднее</span>
+    </div>
+  `;
+
+  for (const p of data.presets) {
+    const row = document.createElement("div");
+    row.className = "stats-row";
+    row.innerHTML = `
+      <span>${p.label}</span>
+      <span>${p.best ? formatElapsed(p.best) : "—"}</span>
+      <span>${p.average ? formatElapsed(p.average) : "—"}</span>
+    `;
+    statsGrid.append(row);
+  }
+
+  if (typeof statsDialog.show === "function") statsDialog.show();
+  else statsDialog.setAttribute("open", "");
 }
 
 async function api(url, options = {}) {

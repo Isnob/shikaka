@@ -45,7 +45,15 @@ PUBLIC_DIR = Path(__file__).with_name("public").resolve()
 STATE_KEY = "solo"
 TUNING_MAX = 30
 SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
-BOARD_SIZES = [6, 8, 10, 20, 26]
+PRESETS = [
+  {"size": 6, "meanArea": 5, "areaSpread": 6},
+  {"size": 8, "meanArea": 5, "areaSpread": 15},
+  {"size": 10, "meanArea": 6, "areaSpread": 10},
+  {"size": 15, "meanArea": 7, "areaSpread": 14},
+  {"size": 20, "meanArea": 8, "areaSpread": 17},
+  {"size": 26, "meanArea": 8, "areaSpread": 19},
+]
+BOARD_SIZES = [preset["size"] for preset in PRESETS]
 
 
 def connect():
@@ -182,6 +190,9 @@ class ShikakaHandler(BaseHTTPRequestHandler):
       if path == "/api/leaderboard" and method == "GET":
         self.handle_get_leaderboard(parsed)
         return
+      if path == "/api/user-stats" and method == "GET":
+        self.handle_get_user_stats(parsed)
+        return
       if path == "/api/level" and method == "POST":
         self.handle_create_level()
         return
@@ -313,6 +324,9 @@ class ShikakaHandler(BaseHTTPRequestHandler):
     if not all(isinstance(value, int) for value in [size, mean_area, area_spread, elapsed_ms]) or size <= 0 or elapsed_ms <= 0 or not seed:
       self.send_json(400, {"error": "bad_score"})
       return
+    if not is_preset(size, mean_area, area_spread):
+      self.send_json(400, {"error": "bad_score"})
+      return
     level = find_level(size, seed, mean_area, area_spread)
     if not level:
       self.send_json(400, {"error": "unknown_level"})
@@ -344,30 +358,95 @@ class ShikakaHandler(BaseHTTPRequestHandler):
     size_param = params.get("size", [None])[0]
     sizes = [to_int(size_param)] if size_param else BOARD_SIZES
     sizes = [size for size in sizes if isinstance(size, int)]
+    preset_tuples = [(preset["size"], preset["meanArea"], preset["areaSpread"]) for preset in PRESETS if preset["size"] in sizes]
+    if not preset_tuples:
+      self.send_json(200, {"sizes": sizes, "groups": {str(size): [] for size in sizes}})
+      return
+    preset_sql = ", ".join(["(%s, %s, %s)"] * len(preset_tuples))
+    preset_params = [value for preset in preset_tuples for value in preset]
     rows = query(
-      """
-      select display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
+      f"""
+      select user_key, display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
       from (
         select best_per_user.*,
                row_number() over (partition by size order by elapsed_ms asc, created_at asc) as rank
         from (
           select distinct on (size, user_key)
-                 display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
+                 user_key, display_name, size, seed, mean_area, area_spread, elapsed_ms, created_at
           from shikaka_scores
-          where size = any(%s::int[])
+          where (size, mean_area, area_spread) in ({preset_sql})
           order by size, user_key, elapsed_ms asc, created_at asc
         ) best_per_user
       ) ranked
       where rank <= 20
       order by size asc, elapsed_ms asc, created_at asc
       """,
-      (sizes,),
+      tuple(preset_params),
       fetch=True,
     )
     groups = {str(size): [] for size in sizes}
     for row in rows:
       groups[str(row["size"])].append(row)
     self.send_json(200, {"sizes": sizes, "groups": groups})
+
+  def handle_get_user_stats(self, parsed):
+    params = urllib.parse.parse_qs(parsed.query)
+    user_key = params.get("userKey", [None])[0]
+    if not user_key:
+      self.send_json(400, {"error": "missing_user_key"})
+      return
+
+    user = None
+    if user_key.startswith("google:"):
+      user = query(
+        "select name, email from shikaka_users where google_sub = %s",
+        (user_key.removeprefix("google:"),),
+        one=True,
+      )
+    score_name = query(
+      """
+      select display_name
+      from shikaka_scores
+      where user_key = %s
+      order by created_at desc
+      limit 1
+      """,
+      (user_key,),
+      one=True,
+    )
+    name = (user or {}).get("name") or (user or {}).get("email") or (score_name or {}).get("display_name") or "Player"
+
+    rows = query(
+      """
+      select size, mean_area, area_spread, elapsed_ms
+      from shikaka_scores
+      where user_key = %s
+      """,
+      (user_key,),
+      fetch=True,
+    )
+
+    grouped = {}
+    for row in rows:
+      key_tuple = (row["size"], row["mean_area"], row["area_spread"])
+      grouped.setdefault(key_tuple, []).append(row["elapsed_ms"])
+
+    presets = []
+    for preset in PRESETS:
+      key_tuple = (preset["size"], preset["meanArea"], preset["areaSpread"])
+      times = grouped.get(key_tuple, [])
+      presets.append({
+        "label": f"{preset['size']}x{preset['size']}",
+        "best": min(times) if times else None,
+        "average": round(sum(times) / len(times)) if times else None,
+      })
+
+    self.send_json(200, {
+      "name": name,
+      "totalSuccess": len(rows),
+      "totalUnsuccessful": 0,
+      "presets": presets,
+    })
 
   def handle_google_start(self):
     if not is_google_configured():
@@ -939,6 +1018,13 @@ def to_int(value):
     return number if str(number) == str(value) or isinstance(value, int) else number
   except (TypeError, ValueError):
     return None
+
+
+def is_preset(size, mean_area, area_spread):
+  return any(
+    preset["size"] == size and preset["meanArea"] == mean_area and preset["areaSpread"] == area_spread
+    for preset in PRESETS
+  )
 
 
 def json_default(value):
