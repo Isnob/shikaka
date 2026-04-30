@@ -26,18 +26,18 @@ const leaderboardTitle = document.querySelector("#leaderboardTitle");
 const leaderboardList = document.querySelector("#leaderboard");
 
 const palette = [
-  "#c7f089",
-  "#bcece7",
-  "#ffdad6",
-  "#ffd9a8",
-  "#d8e2ff",
-  "#f2daff",
-  "#dce7c8",
-  "#f0e1c2",
-  "#c4e7ff",
-  "#f9d7e3",
-  "#e5e4dd",
-  "#cdeccf"
+  "#cae6ff",
+  "#d3e5f6",
+  "#ebdcff",
+  "#96ccf8",
+  "#b7c9d9",
+  "#cfc0e8",
+  "#dde3ea",
+  "#e0e3e8",
+  "#bfe9ff",
+  "#d7eaff",
+  "#e8e1f6",
+  "#c7dff0"
 ];
 const guestStorageKey = "shikaka:guest-state";
 const tuningMax = 30;
