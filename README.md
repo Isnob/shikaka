@@ -71,7 +71,7 @@ graph LR
    npm start
    ```
 
-Open `http://localhost:3000`. If `SHIKAKU_PASSWORD` is not configured, the default development password is `change-me`.
+Open `http://localhost:3000`. You can play as a guest or sign in with Google when OAuth is configured.
 
 ### Google Login
 
@@ -95,7 +95,18 @@ For production, set `PUBLIC_BASE_URL` to the public origin and use the matching 
 https://your-domain.example/auth/google/callback
 ```
 
-Each Google account gets its own saved progress. The password login remains available as a fallback and uses the shared `solo` progress slot.
+Each Google account gets its own saved progress. Guest mode stores progress locally in the browser.
+
+### Cloudflare Turnstile
+
+Turnstile protects the Google sign-in entrypoint when both variables are present:
+
+```bash
+TURNSTILE_SITE_KEY='0x...'
+TURNSTILE_SECRET_KEY='...'
+```
+
+The site key is public and is sent to the browser. The secret key must stay only in `.env` on the server.
 
 ## Deployment
 
@@ -103,12 +114,13 @@ Shikaka runs perfectly on a standard VPS without needing complex orchestrators o
 
 ```bash
 PORT=3000 \
-SHIKAKU_PASSWORD='your-strong-password' \
 SESSION_SECRET='long-random-string' \
 DATABASE_URL='postgres://user:password@localhost:5432/shikaka' \
 PUBLIC_BASE_URL='https://your-domain.example' \
 GOOGLE_CLIENT_ID='...apps.googleusercontent.com' \
 GOOGLE_CLIENT_SECRET='...' \
+TURNSTILE_SITE_KEY='0x...' \
+TURNSTILE_SECRET_KEY='...' \
 npm start
 ```
 

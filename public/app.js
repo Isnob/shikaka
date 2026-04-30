@@ -4,6 +4,7 @@ const loginForm = document.querySelector("#loginForm");
 const loginError = document.querySelector("#loginError");
 const googleLogin = document.querySelector("#googleLogin");
 const guestLogin = document.querySelector("#guestLogin");
+const turnstileMount = document.querySelector("#turnstileMount");
 const board = document.querySelector("#board");
 const boardWrap = document.querySelector(".boardWrap");
 const statusLine = document.querySelector("#status");
@@ -70,6 +71,8 @@ let boardZoom = 1;
 let boardGesture = null;
 let advancedSelectedSize = 10;
 let generationInFlight = false;
+let turnstileSiteKey = "";
+let turnstileWidgetId = null;
 const boardPointers = new Map();
 
 boot();
@@ -77,13 +80,18 @@ boot();
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   loginError.textContent = "";
-  const password = getControlValue(document.querySelector("#password"));
-  const response = await api("/api/login", { method: "POST", body: { password } });
+  setControlDisabled(googleLogin, true);
+  const response = await api("/auth/google/start", {
+    method: "POST",
+    body: { turnstileToken: getTurnstileToken() }
+  });
+  setControlDisabled(googleLogin, false);
   if (!response.ok) {
-    loginError.textContent = "Пароль не подошел";
+    resetTurnstile();
+    loginError.textContent = loginStartErrorText(response.error);
     return;
   }
-  await loadGame();
+  window.location.href = response.redirectUrl;
 });
 
 guestLogin.addEventListener("click", async () => {
@@ -214,7 +222,9 @@ logoutButton.addEventListener("click", async () => {
 
 async function boot() {
   const me = await api("/api/me");
+  turnstileSiteKey = me.turnstileSiteKey || "";
   googleLogin.classList.toggle("hidden", !me.googleConfigured);
+  setupTurnstile();
   if (me.authenticated) {
     currentUser = me.user;
     await loadGame({ guest: false });
@@ -222,6 +232,38 @@ async function boot() {
     login.classList.remove("hidden");
   }
   await loadLeaderboard();
+}
+
+function setupTurnstile() {
+  turnstileMount.classList.toggle("hidden", !turnstileSiteKey);
+  if (!turnstileSiteKey || turnstileWidgetId !== null) return;
+  const render = () => {
+    if (!window.turnstile || turnstileWidgetId !== null) return;
+    turnstileWidgetId = window.turnstile.render(turnstileMount, {
+      sitekey: turnstileSiteKey,
+      theme: "auto"
+    });
+  };
+  if (window.turnstile) render();
+  else window.addEventListener("load", render, { once: true });
+}
+
+function getTurnstileToken() {
+  if (!turnstileSiteKey) return "";
+  return window.turnstile && turnstileWidgetId !== null
+    ? window.turnstile.getResponse(turnstileWidgetId)
+    : "";
+}
+
+function resetTurnstile() {
+  if (window.turnstile && turnstileWidgetId !== null) window.turnstile.reset(turnstileWidgetId);
+}
+
+function loginStartErrorText(error) {
+  if (error === "turnstile_required") return "Подтверди проверку Cloudflare";
+  if (error === "turnstile_failed") return "Cloudflare не пропустил проверку";
+  if (error === "google_not_configured") return "Google вход пока не настроен";
+  return "Не удалось начать вход через Google";
 }
 
 async function loadGame({ guest = false } = {}) {

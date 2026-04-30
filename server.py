@@ -35,11 +35,12 @@ load_dotenv(Path(__file__).with_name(".env"))
 
 PORT = int(os.environ.get("PORT", "3000"))
 HOST = os.environ.get("HOST", "0.0.0.0")
-PASSWORD = os.environ.get("SHIKAKU_PASSWORD", "change-me")
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgres://localhost:5432/shikaka")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "dev-session-secret-change-me")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
+TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
 PUBLIC_DIR = Path(__file__).with_name("public").resolve()
 STATE_KEY = "solo"
@@ -225,14 +226,11 @@ class ShikakaHandler(BaseHTTPRequestHandler):
       path = parsed.path
       method = self.command
 
-      if path == "/auth/google/start" and method == "GET":
-        self.handle_google_start()
+      if path == "/auth/google/start" and method in ("GET", "POST"):
+        self.handle_google_start(json_response=method == "POST")
         return
       if path == "/auth/google/callback" and method == "GET":
         self.handle_google_callback()
-        return
-      if path == "/api/login" and method == "POST":
-        self.handle_login()
         return
       if path == "/api/logout" and method == "POST":
         self.handle_logout()
@@ -242,6 +240,7 @@ class ShikakaHandler(BaseHTTPRequestHandler):
         self.send_json(200, {
           "authenticated": bool(auth),
           "googleConfigured": is_google_configured(),
+          "turnstileSiteKey": TURNSTILE_SITE_KEY if is_turnstile_configured() else "",
           "user": auth.get("user") if auth else None,
         })
         return
@@ -280,21 +279,6 @@ class ShikakaHandler(BaseHTTPRequestHandler):
     except Exception as error:
       print(error)
       self.send_json(500, {"error": "internal_error"})
-
-  def handle_login(self):
-    body = self.read_json()
-    password = str(body.get("password") or "")
-    if not hmac.compare_digest(password.encode(), PASSWORD.encode()):
-      self.send_json(403, {"error": "bad_password"})
-      return
-
-    session_id = secrets.token_hex(32)
-    store_session(session_id, {
-      "stateKey": STATE_KEY,
-      "user": {"provider": "password", "name": "Password user"},
-    })
-    self.send_header_cookie(cookie_header("sid", sign_session(session_id)))
-    self.send_json(200, {"ok": True})
 
   def handle_logout(self):
     session_id = self.read_signed_session()
@@ -527,22 +511,36 @@ class ShikakaHandler(BaseHTTPRequestHandler):
       "presets": presets,
     })
 
-  def handle_google_start(self):
+  def handle_google_start(self, json_response=False):
     if not is_google_configured():
-      self.send_text(501, "Google login is not configured.")
+      if json_response:
+        self.send_json(501, {"ok": False, "error": "google_not_configured"})
+      else:
+        self.send_text(501, "Google login is not configured.")
       return
-    state = secrets.token_hex(24)
-    params = urllib.parse.urlencode({
-      "client_id": GOOGLE_CLIENT_ID,
-      "redirect_uri": google_redirect_uri(self),
-      "response_type": "code",
-      "scope": "openid email profile",
-      "state": state,
-      "prompt": "select_account",
-    })
+    if is_turnstile_configured():
+      if not json_response:
+        self.send_text(405, "Use the Google login button.")
+        return
+      body = self.read_json()
+      token = str(body.get("turnstileToken") or "")
+      if not token:
+        self.send_json(400, {"ok": False, "error": "turnstile_required"})
+        return
+      if not verify_turnstile(token, self.client_address[0]):
+        self.send_json(403, {"ok": False, "error": "turnstile_failed"})
+        return
+    elif json_response:
+      self.read_json()
+
+    redirect_url = google_oauth_url(self)
+    if json_response:
+      self.send_header_cookie(cookie_header("oauth_state", sign_session(self._oauth_state), 600))
+      self.send_json(200, {"ok": True, "redirectUrl": redirect_url})
+      return
     self.send_response(302)
-    self.send_header("Set-Cookie", cookie_header("oauth_state", sign_session(state), 600))
-    self.send_header("Location", f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+    self.send_header("Set-Cookie", cookie_header("oauth_state", sign_session(self._oauth_state), 600))
+    self.send_header("Location", redirect_url)
     self.end_headers()
 
   def handle_google_callback(self):
@@ -1065,8 +1063,39 @@ def is_google_configured():
   return bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
 
 
+def is_turnstile_configured():
+  return bool(TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY)
+
+
+def verify_turnstile(token, remote_ip):
+  try:
+    result = post_form("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      "secret": TURNSTILE_SECRET_KEY,
+      "response": token,
+      "remoteip": remote_ip,
+    })
+    return result.get("success") is True
+  except Exception as error:
+    print(f"Turnstile verification failed: {error}")
+    return False
+
+
 def google_redirect_uri(handler):
   return f"{base_url(handler)}/auth/google/callback"
+
+
+def google_oauth_url(handler):
+  state = secrets.token_hex(24)
+  handler._oauth_state = state
+  params = urllib.parse.urlencode({
+    "client_id": GOOGLE_CLIENT_ID,
+    "redirect_uri": google_redirect_uri(handler),
+    "response_type": "code",
+    "scope": "openid email profile",
+    "state": state,
+    "prompt": "select_account",
+  })
+  return f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
 
 
 def base_url(handler):

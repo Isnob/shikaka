@@ -133,12 +133,19 @@ md-slider {
   width: 100%;
 }
 
-.login md-outlined-text-field {
+.turnstileMount {
+  display: flex;
+  justify-content: center;
+  min-height: 65px;
   margin: 26px 0 14px;
 }
 
 .googleLogin {
-  margin-top: 10px;
+  margin-top: 26px;
+}
+
+.turnstileMount + .googleLogin {
+  margin-top: 0;
 }
 
 .guestLogin {

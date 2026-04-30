@@ -18,15 +18,15 @@
       import { styles as typescaleStyles } from "@material/web/typography/md-typescale-styles.js";
       document.adoptedStyleSheets.push(typescaleStyles.styleSheet);
     </script>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
   </head>
   <body>
     <main class="app">
       <section class="login" id="login">
         <form class="login__panel" id="loginForm">
           <h1 class="md-typescale-display-medium">Shikaka</h1>
-          <md-outlined-text-field id="password" name="password" type="password" label="Пароль" autocomplete="current-password" required></md-outlined-text-field>
-          <md-filled-button type="submit">Войти</md-filled-button>
-          <md-filled-tonal-button class="googleLogin hidden" id="googleLogin" href="/auth/google/start">Войти через Google</md-filled-tonal-button>
+          <div class="turnstileMount hidden" id="turnstileMount"></div>
+          <md-filled-button class="googleLogin hidden" id="googleLogin" type="submit">Войти через Google</md-filled-button>
           <md-filled-tonal-button class="guestLogin" id="guestLogin" type="button">Играть без входа</md-filled-tonal-button>
           <p class="error" id="loginError" role="alert"></p>
         </form>
