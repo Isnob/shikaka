@@ -48,52 +48,53 @@
               <md-filled-tonal-button data-size="26" data-mean="8" data-spread="19">26x26</md-filled-tonal-button>
             </div>
 
-            <md-filled-tonal-button class="settingsAction" id="toggleAdvanced" type="button" aria-expanded="false">
-              <span>Настройки</span>
-              <span class="settingsAction__arrow" aria-hidden="true">⌄</span>
-            </md-filled-tonal-button>
-
-            <div class="advanced-card hidden" id="advancedPanel">
-              <div class="advanced-header">
-                <span class="md-typescale-title-small">Настройки генерации</span>
-              </div>
-              <div class="advanced-content">
-                <div class="tuning-field tuning-field--sizes">
-                  <span class="md-typescale-label-medium">Размер поля</span>
-                  <div class="size-picks" id="advancedSizes">
-                    <md-filled-tonal-button data-size="6">6x6</md-filled-tonal-button>
-                    <md-filled-tonal-button data-size="8">8x8</md-filled-tonal-button>
-                    <md-filled-tonal-button data-size="10">10x10</md-filled-tonal-button>
-                    <md-filled-tonal-button data-size="15">15x15</md-filled-tonal-button>
-                    <md-filled-tonal-button data-size="20">20x20</md-filled-tonal-button>
-                    <md-filled-tonal-button data-size="26">26x26</md-filled-tonal-button>
-                  </div>
-                </div>
-                <div class="tuning-field">
-                  <span class="md-typescale-label-medium">Среднее</span>
-                  <div class="slider-row">
-                    <md-slider id="meanArea" min="0" max="30" step="1" value="15"></md-slider>
-                    <output class="md-typescale-label-large" id="meanAreaLabel">15</output>
-                  </div>
-                </div>
-                <div class="tuning-field">
-                  <span class="md-typescale-label-medium">Разброс</span>
-                  <div class="slider-row">
-                    <md-slider id="areaSpread" min="0" max="30" step="1" value="15"></md-slider>
-                    <output class="md-typescale-label-large" id="areaSpreadLabel">15</output>
-                  </div>
-                </div>
-              </div>
-              <div class="advanced-actions">
-                <md-filled-button id="advancedCreate">Создать поле</md-filled-button>
-              </div>
-            </div>
-
             <md-filled-button class="primaryAction" id="newGame" type="button">Новый уровень</md-filled-button>
             <md-filled-tonal-button class="tonalAction" id="solve" type="button">Решение</md-filled-tonal-button>
             <md-filled-tonal-button class="tonalAction" id="undo" type="button">Назад</md-filled-tonal-button>
             <md-outlined-button class="outlineAction dangerAction" id="clear" type="button">Очистить</md-outlined-button>
             <md-outlined-button class="outlineAction" id="logout" type="button">Выйти</md-outlined-button>
+            <md-filled-tonal-button class="settingsAction" id="toggleAdvanced" type="button" aria-expanded="false">
+              <span>Настройки</span>
+              <span class="settingsAction__arrow" aria-hidden="true">⌄</span>
+            </md-filled-tonal-button>
+
+            <div class="advanced-card" id="advancedPanel" aria-hidden="true" inert>
+              <div class="advanced-card__inner">
+                <div class="advanced-header">
+                  <span class="md-typescale-title-small">Настройки генерации</span>
+                </div>
+                <div class="advanced-content">
+                  <div class="tuning-field tuning-field--sizes">
+                    <span class="md-typescale-label-medium">Размер поля</span>
+                    <div class="size-picks" id="advancedSizes">
+                      <md-filled-tonal-button data-size="6">6x6</md-filled-tonal-button>
+                      <md-filled-tonal-button data-size="8">8x8</md-filled-tonal-button>
+                      <md-filled-tonal-button data-size="10">10x10</md-filled-tonal-button>
+                      <md-filled-tonal-button data-size="15">15x15</md-filled-tonal-button>
+                      <md-filled-tonal-button data-size="20">20x20</md-filled-tonal-button>
+                      <md-filled-tonal-button data-size="26">26x26</md-filled-tonal-button>
+                    </div>
+                  </div>
+                  <div class="tuning-field">
+                    <span class="md-typescale-label-medium">Среднее</span>
+                    <div class="slider-row">
+                      <md-slider id="meanArea" min="0" max="30" step="1" value="15"></md-slider>
+                      <output class="md-typescale-label-large" id="meanAreaLabel">15</output>
+                    </div>
+                  </div>
+                  <div class="tuning-field">
+                    <span class="md-typescale-label-medium">Разброс</span>
+                    <div class="slider-row">
+                      <md-slider id="areaSpread" min="0" max="30" step="1" value="15"></md-slider>
+                      <output class="md-typescale-label-large" id="areaSpreadLabel">15</output>
+                    </div>
+                  </div>
+                </div>
+                <div class="advanced-actions">
+                  <md-filled-button id="advancedCreate">Создать поле</md-filled-button>
+                </div>
+              </div>
+            </div>
           </div>
         </header>
 

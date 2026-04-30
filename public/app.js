@@ -69,6 +69,7 @@ let clockTimer = null;
 let boardZoom = 1;
 let boardGesture = null;
 let advancedSelectedSize = 10;
+let generationInFlight = false;
 const boardPointers = new Map();
 
 boot();
@@ -115,17 +116,21 @@ advancedSizes.addEventListener("click", (event) => {
 });
 
 toggleAdvancedButton.addEventListener("click", () => {
-  advancedPanel.classList.toggle("hidden");
-  toggleAdvancedButton.classList.toggle("active");
-  const isOpen = !advancedPanel.classList.contains("hidden");
+  const isOpen = !advancedPanel.classList.contains("open");
+  advancedPanel.classList.toggle("open", isOpen);
+  toggleAdvancedButton.classList.toggle("active", isOpen);
   toggleAdvancedButton.setAttribute("aria-expanded", String(isOpen));
+  advancedPanel.setAttribute("aria-hidden", String(!isOpen));
+  advancedPanel.inert = !isOpen;
 });
 
 advancedCreateButton.addEventListener("click", async () => {
   const tuning = readTuning();
   const size = advancedSelectedSize;
   updatePresetSelection(null);
-  advancedPanel.classList.add("hidden");
+  advancedPanel.classList.remove("open");
+  advancedPanel.setAttribute("aria-hidden", "true");
+  advancedPanel.inert = true;
   toggleAdvancedButton.classList.remove("active");
   toggleAdvancedButton.setAttribute("aria-expanded", "false");
   await startNewGame(size, tuning);
@@ -269,11 +274,12 @@ function updateAdvancedSizeSelection() {
 }
 
 async function startNewGame(size, tuning) {
-  setControlDisabled(newGameButton, true);
+  if (generationInFlight) return;
+  generationInFlight = true;
   try {
     state = await makeGame(size, tuning);
   } finally {
-    setControlDisabled(newGameButton, false);
+    generationInFlight = false;
   }
   render();
   scheduleSave();

@@ -226,11 +226,31 @@ md-slider {
 }
 
 .advanced-card {
-  order: 2;
+  order: 100;
   position: static;
   z-index: 100;
   width: min(100%, 640px);
   margin-left: auto;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.99);
+  transform-origin: top right;
+  transition:
+    max-height 260ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 160ms ease,
+    transform 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.advanced-card.open {
+  max-height: 560px;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+.advanced-card__inner {
   padding: 16px;
   background: var(--md-sys-color-surface-container-high);
   border: 1px solid var(--md-sys-color-outline-variant);
@@ -264,10 +284,6 @@ md-slider {
   border-top: 1px solid var(--md-sys-color-outline-variant);
 }
 
-.advanced-card.hidden {
-  display: none;
-}
-
 md-dialog:not([open]) {
   display: none;
 }
@@ -292,6 +308,19 @@ md-dialog:not([open]) {
 
 .primaryAction {
   min-width: 164px;
+  --md-filled-button-pressed-container-color: var(--md-sys-color-primary);
+  --md-filled-button-hover-container-color: var(--md-sys-color-primary);
+  --md-filled-button-focus-container-color: var(--md-sys-color-primary);
+  --md-filled-button-pressed-state-layer-color: var(--md-sys-color-on-primary);
+  --md-filled-button-pressed-state-layer-opacity: 0.08;
+  --md-filled-button-hover-state-layer-opacity: 0.06;
+  transition:
+    transform 120ms cubic-bezier(0.2, 0, 0, 1),
+    box-shadow 160ms ease;
+}
+
+.primaryAction:active {
+  transform: scale(0.985);
 }
 
 .dangerAction {
